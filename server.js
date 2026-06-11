@@ -28,16 +28,18 @@ async function getSfConnection() {
   const conn = new jsforce.Connection({ loginUrl });
 
   const username = process.env.SF_USERNAME;
+  const password = process.env.SF_PASSWORD || '';
   const clientId = process.env.SF_CLIENT_ID;
   const clientSecret = process.env.SF_CLIENT_SECRET;
   const securityToken = process.env.SF_SECURITY_TOKEN || '';
+  const fullPassword = password + securityToken;
 
-  if (clientId && clientSecret) {
+  if (clientId && clientSecret && username) {
     // OAuth2 password flow
     conn.oauth2 = new jsforce.OAuth2({ loginUrl, clientId, clientSecret });
-    await conn.login(username, securityToken);
-  } else if (username && securityToken) {
-    await conn.login(username, securityToken);
+    await conn.login(username, fullPassword);
+  } else if (username && fullPassword) {
+    await conn.login(username, fullPassword);
   } else {
     throw new Error('No SF credentials configured');
   }
