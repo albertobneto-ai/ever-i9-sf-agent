@@ -322,6 +322,31 @@ app.post('/api/rollback/:id', (req, res) => {
   res.json(task);
 });
 
+// Refine — AI adjusts artifact based on natural language instruction
+app.post('/api/refine/:id', async (req, res) => {
+  const task = tasks.get(req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+
+  const { instruction } = req.body;
+  if (!instruction) return res.status(400).json({ error: 'instruction is required' });
+
+  try {
+    const refined = await callLLM(
+      `You are a Salesforce expert. You have an existing artifact that needs adjustment. Apply the user's instruction and output ONLY the updated artifact code — no explanations, no markdown fences.`,
+      `Original request: ${task.intent}\n\nCurrent artifact (${task.artifact.type}):\n${task.artifact.code}\n\nInstruction to apply: ${instruction}`,
+      2048
+    );
+    task.artifact.code = refined.replace(/^```[\w]*\n?/, '').replace(/\n?```$/, '');
+    task.usedAI = true;
+    task.refinedAt = new Date().toISOString();
+    task.refinements = (task.refinements || 0) + 1;
+    res.json(task);
+  } catch (e) {
+    console.warn('[Refine] LLM failed:', e.message);
+    res.status(500).json({ error: 'Falha ao refinar: ' + e.message });
+  }
+});
+
 // ─── Helpers ────────────────────────────────
 function extractObjectNames(msg) {
   const known = ['Account','Contact','Lead','Opportunity','Case','Order','Quote','Contract',

@@ -75,8 +75,12 @@ function App(){
   const [loading,setLoading]=useState(false);
   const [orgInfo,setOrgInfo]=useState(null);
   const [orgLoading,setOrgLoading]=useState(true);
+  const [showRefine,setShowRefine]=useState(false);
+  const [refineText,setRefineText]=useState('');
+  const [refining,setRefining]=useState(false);
   const chatEndRef=useRef(null);
   const inputRef=useRef(null);
+  const refineRef=useRef(null);
 
   // Fetch org status on mount
   useEffect(()=>{
@@ -135,6 +139,29 @@ function App(){
     fetch('/api/rollback/'+tid,{method:'POST'}).catch(()=>{});
     setHistory(p=>p.map(t=>t.taskId===tid?{...t,status:'rolled_back'}:t));
   },[]);
+
+  const openTask=useCallback((task)=>{
+    setCurTask(task);
+    setView('preview');
+  },[]);
+
+  const doRefine=useCallback(async()=>{
+    if(!curTask||!refineText.trim())return;
+    setRefining(true);
+    try{
+      const res=await fetch('/api/refine/'+curTask.taskId,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({instruction:refineText})});
+      const text=await res.text();
+      let data;
+      try{data=JSON.parse(text);}catch(e){throw new Error('Resposta inválida');}
+      if(data.error)throw new Error(data.error);
+      setCurTask(data);
+      setRefineText('');
+      setShowRefine(false);
+    }catch(e){
+      alert('Erro ao refinar: '+e.message);
+    }
+    setRefining(false);
+  },[curTask,refineText]);
 
   const pendingN=history.filter(t=>t.status==='pending_review').length;
   const filtHist=histFilter==='all'?history:history.filter(t=>t.agent===histFilter);
@@ -269,9 +296,28 @@ function App(){
                     </div>
                     <div style={{display:'flex',gap:8}}>
                       <button onClick={doReject} style={{flex:1,padding:'10px 0',borderRadius:10,border:'1px solid #e5e7eb',background:'#fff',cursor:'pointer',fontSize:12,fontWeight:600,color:'#6b7280',display:'flex',alignItems:'center',justifyContent:'center',gap:5}}><Ico.X/> Rejeitar</button>
-                      <button style={{flex:1,padding:'10px 0',borderRadius:10,border:'1px solid #e5e7eb',background:'#fff',cursor:'pointer',fontSize:12,fontWeight:600,color:'#6b7280',display:'flex',alignItems:'center',justifyContent:'center',gap:5}}><Ico.Edit/> Editar</button>
+                      <button onClick={()=>{setShowRefine(true);setTimeout(()=>refineRef.current?.focus(),100);}} style={{flex:1,padding:'10px 0',borderRadius:10,border:'1px solid #e5e7eb',background:'#fff',cursor:'pointer',fontSize:12,fontWeight:600,color:'#6b7280',display:'flex',alignItems:'center',justifyContent:'center',gap:5}}><Ico.Zap/> Refinar com IA</button>
                       <button onClick={doApprove} style={{flex:1.5,padding:'10px 0',borderRadius:10,border:'none',cursor:'pointer',fontSize:12,fontWeight:700,color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',gap:5,background:'linear-gradient(135deg,#111,#333)',boxShadow:'0 4px 16px rgba(0,0,0,0.2)'}}><Ico.Check/> Aprovar e deployar</button>
                     </div>
+                    {/* REFINE POPUP */}
+                    {showRefine&&(
+                      <div style={{marginTop:12,padding:14,background:'#f9fafb',borderRadius:12,border:'1px solid #e5e7eb',animation:'fadeIn .2s ease'}}>
+                        <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8}}>
+                          <Ico.Zap/>
+                          <span style={{fontSize:12,fontWeight:700,letterSpacing:'-0.2px'}}>Refinar com IA</span>
+                          <button onClick={()=>setShowRefine(false)} style={{marginLeft:'auto',background:'none',border:'none',cursor:'pointer',color:'#9ca3af',padding:2}}><Ico.X/></button>
+                        </div>
+                        <div style={{fontSize:11,color:'#6b7280',marginBottom:8,lineHeight:'1.5'}}>Descreva o ajuste em linguagem natural. A IA vai modificar o artefato.</div>
+                        <div style={{display:'flex',gap:8}}>
+                          <input ref={refineRef} value={refineText} onChange={e=>setRefineText(e.target.value)} placeholder="Ex: adicione tratamento de erro, mude para batch apex..." disabled={refining}
+                            onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();doRefine();}}}
+                            style={{flex:1,padding:'8px 12px',borderRadius:8,border:'1px solid #e5e7eb',fontSize:12,fontFamily:'DM Sans',outline:'none',background:refining?'#f3f4f6':'#fff'}}/>
+                          <button onClick={doRefine} disabled={refining||!refineText.trim()} style={{padding:'8px 16px',borderRadius:8,border:'none',cursor:'pointer',fontSize:11,fontWeight:700,color:'#fff',background:refining?'#9ca3af':'#111',display:'flex',alignItems:'center',gap:4,whiteSpace:'nowrap'}}>
+                            {refining?'Refinando...':'Aplicar'}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div style={{flex:1,borderLeft:'1px solid rgba(255,255,255,0.06)',display:'flex',flexDirection:'column',overflow:'hidden',animation:'slideRight .3s ease'}}>
@@ -292,7 +338,7 @@ function App(){
                           <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}><span style={{fontSize:11,color:'#9ca3af'}}>Tipo</span><span style={{fontSize:11,fontWeight:600}}>{curTask.artifact.type}</span></div>
                           <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}><span style={{fontSize:11,color:'#9ca3af'}}>Agente</span><span style={{fontSize:11,fontWeight:600}}>{curTask.agentName}</span></div>
                           <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}><span style={{fontSize:11,color:'#9ca3af'}}>IA</span><span style={{fontSize:11,fontWeight:600}}>{curTask.usedAI?'DeepSeek':'Fallback stub'}</span></div>
-                          <div style={{display:'flex',justifyContent:'space-between'}}><span style={{fontSize:11,color:'#9ca3af'}}>Status</span><span style={badge('pending_review')}>{ST.pending_review.label}</span></div>
+                          <div style={{display:'flex',justifyContent:'space-between'}}><span style={{fontSize:11,color:'#9ca3af'}}>Status</span><span style={badge(curTask.status)}>{(ST[curTask.status]||ST.pending_review).label}</span></div>
                         </div>
                       </div>
                     </div>
@@ -323,14 +369,16 @@ function App(){
                   const ag=AGENTS.find(a=>a.id===task.agent)||AGENTS[0];
                   const st=ST[task.status]||ST.pending_review;
                   return(
-                    <div key={task.taskId||i} style={{display:'flex',alignItems:'center',gap:12,padding:'12px 16px',borderRadius:12,background:'#fff',marginBottom:8,boxShadow:'0 1px 6px rgba(0,0,0,0.05)',animation:'fadeIn .25s ease',cursor:'default'}}>
+                    <div key={task.taskId||i} onClick={()=>openTask(task)} style={{display:'flex',alignItems:'center',gap:12,padding:'12px 16px',borderRadius:12,background:'#fff',marginBottom:8,boxShadow:'0 1px 6px rgba(0,0,0,0.05)',animation:'fadeIn .25s ease',cursor:'pointer',transition:'box-shadow .15s'}}
+                      onMouseEnter={e=>e.currentTarget.style.boxShadow='0 3px 16px rgba(0,0,0,0.12)'}
+                      onMouseLeave={e=>e.currentTarget.style.boxShadow='0 1px 6px rgba(0,0,0,0.05)'}>
                       <div style={{width:32,height:32,borderRadius:10,background:`${ag.color}15`,display:'flex',alignItems:'center',justifyContent:'center',color:ag.color,flexShrink:0}}><ag.icon/></div>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{fontSize:12,fontWeight:600,letterSpacing:'-0.2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{task.intent}</div>
                         <div style={{fontSize:10,color:'#9ca3af',marginTop:2}}>{ag.label} · {new Date(task.createdAt).toLocaleString('pt-BR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
                       </div>
                       <span style={badge(task.status)}>{st.label}</span>
-                      {task.status==='failed'&&<button onClick={()=>doRollback(task.taskId)} style={{display:'flex',alignItems:'center',gap:4,padding:'4px 10px',borderRadius:6,border:'1px solid #e5e7eb',background:'#fff',cursor:'pointer',fontSize:10,fontWeight:600,color:'#6b7280',marginLeft:4}}><Ico.Undo/> Rollback</button>}
+                      {task.status==='failed'&&<button onClick={e=>{e.stopPropagation();doRollback(task.taskId);}} style={{display:'flex',alignItems:'center',gap:4,padding:'4px 10px',borderRadius:6,border:'1px solid #e5e7eb',background:'#fff',cursor:'pointer',fontSize:10,fontWeight:600,color:'#6b7280',marginLeft:4}}><Ico.Undo/> Rollback</button>}
                     </div>
                   );
                 })}
