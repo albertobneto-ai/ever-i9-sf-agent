@@ -71,7 +71,7 @@ function callClaude(systemPrompt, userMessage, maxTokens = 4096) {
     if (!apiKey) return reject(new Error('ANTHROPIC_KEY not configured'));
 
     const body = JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6-20250514',
       max_tokens: maxTokens,
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }]
@@ -92,8 +92,10 @@ function callClaude(systemPrompt, userMessage, maxTokens = 4096) {
       res.on('end', () => {
         try {
           const j = JSON.parse(d);
-          if (j.error) return reject(new Error(j.error.message));
+          if (j.error) return reject(new Error(j.error.message || JSON.stringify(j.error)));
+          if (j.type === 'error') return reject(new Error(j.error?.message || d.substring(0,200)));
           const text = j.content?.map(b => b.text || '').join('') || '';
+          if (!text) return reject(new Error('Empty response from Claude'));
           resolve(text);
         } catch (e) { reject(e); }
       });
@@ -250,6 +252,7 @@ app.post('/api/chat', async (req, res) => {
     } catch (e) {
       // Fallback to stub if Claude fails
       console.warn('[Agent] Claude fallback:', e.message);
+      console.warn('[Agent] Falling back to stub artifact');
       artifactCode = generateStubArtifact(detected, message);
     }
 
