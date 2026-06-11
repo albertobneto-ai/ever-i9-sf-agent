@@ -1,0 +1,15 @@
+{
+  "name": "ever-i9-sf-agent",
+  "version": "1.0.0",
+  "description": "Ever I9 SF Agent — AI Salesforce Admin Automation",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": "20.x"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}

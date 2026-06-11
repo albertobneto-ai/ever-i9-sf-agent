@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Ever I9 — SF Agent</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23111'/><text x='50%25' y='54%25' dominant-baseline='middle' text-anchor='middle' font-size='16' font-family='sans-serif' fill='white'>i9</text></svg>"/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;0,9..40,800;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body,#root{height:100%;width:100%;overflow:hidden}
+body{font-family:'DM Sans',sans-serif;background:#0a0a0a;color:#1a1a1a}
+
+.scroll-area{overflow-y:auto;scrollbar-width:thin;scrollbar-color:#d0d0d4 transparent}
+.scroll-area::-webkit-scrollbar{width:6px}
+.scroll-area::-webkit-scrollbar-track{background:transparent}
+.scroll-area::-webkit-scrollbar-thumb{background:#d0d0d4;border-radius:10px}
+.scroll-area::-webkit-scrollbar-thumb:hover{background:#b0b0b8}
+
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes slideRight{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+</style>
+<script type="text/babel">
+const { useState, useCallback, useRef, useEffect } = React;
+
+/* ═══════ ICONS (inline SVG) ═══════ */
+const Icon = {
+  Chat: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>,
+  Preview: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>,
+  History: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+  Send: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>,
+  Check: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
+  X: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+  Edit: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
+  Undo: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>,
+  Zap: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
+  Code: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>,
+  Shield: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
+  Database: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>,
+  FileText: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>,
+  Rocket: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/></svg>,
+  Lock: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>,
+  ArrowLeft: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>,
+  ChevronDown: () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>,
+};
+
+/* ═══════ AGENT CHIPS ═══════ */
+const AGENTS = [
+  { id:'flows', label:'Criar Flow', icon: Icon.Zap, color:'#10b981' },
+  { id:'apex', label:'Gerar Apex', icon: Icon.Code, color:'#6366f1' },
+  { id:'validation', label:'Validation Rule', icon: Icon.Shield, color:'#f59e0b' },
+  { id:'permissions', label:'Permission Set', icon: Icon.Lock, color:'#ef4444' },
+  { id:'data', label:'Limpar Dados', icon: Icon.Database, color:'#06b6d4' },
+  { id:'docs', label:'Documentar Org', icon: Icon.FileText, color:'#8b5cf6' },
+  { id:'deploy', label:'Deploy', icon: Icon.Rocket, color:'#ec4899' },
+];
+
+const STATUS_MAP = {
+  pending_review: { label:'PENDENTE', color:'#f59e0b', bg:'#fef3c7' },
+  deployed: { label:'DEPLOYADO', color:'#10b981', bg:'#d1fae5' },
+  failed: { label:'FALHOU', color:'#ef4444', bg:'#fee2e2' },
+  rolled_back: { label:'REVERTIDO', color:'#6b7280', bg:'#f3f4f6' },
+};
+
+/* ═══════ MOCK HISTORY ═══════ */
+const MOCK_HISTORY = [
+  { id:'t1', agent:'flows', intent:'Criar Flow de auto-assign de Lead por região', status:'deployed', createdAt:'2026-06-11T08:30:00Z' },
+  { id:'t2', agent:'apex', intent:'Trigger para validar CNPJ antes de salvar Account', status:'deployed', createdAt:'2026-06-11T07:15:00Z' },
+  { id:'t3', agent:'validation', intent:'Regra: Opportunity Amount > 0 quando Stage = Closed Won', status:'pending_review', createdAt:'2026-06-11T09:00:00Z' },
+  { id:'t4', agent:'data', intent:'Limpar Contacts sem AccountId', status:'failed', createdAt:'2026-06-10T16:45:00Z' },
+  { id:'t5', agent:'permissions', intent:'PermSet para time de vendas acessar Revenue Cloud', status:'rolled_back', createdAt:'2026-06-10T14:20:00Z' },
+];
+
+/* ═══════ APP ═══════ */
+function App() {
+  const [view, setView] = useState('chat');
+  const [message, setMessage] = useState('');
+  const [chatMessages, setChatMessages] = useState([]);
+  const [currentTask, setCurrentTask] = useState(null);
+  const [history, setHistory] = useState(MOCK_HISTORY);
+  const [historyFilter, setHistoryFilter] = useState('all');
+  const [isLoading, setIsLoading] = useState(false);
+  const chatEndRef = useRef(null);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior:'smooth' });
+  }, [chatMessages]);
+
+  const handleSend = useCallback(async (text, agentType) => {
+    const msg = text || message;
+    if (!msg.trim()) return;
+
+    setChatMessages(prev => [...prev, { role:'user', content: msg }]);
+    setMessage('');
+    setIsLoading(true);
+
+    try {
+      const res = await fetch('/api/chat', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ message: msg, agentType })
+      });
+      const data = await res.json();
+      setChatMessages(prev => [...prev, {
+        role:'agent',
+        content: `Artefato gerado pelo ${data.agentName}. Clique em "Revisar" para aprovar o deploy.`,
+        task: data
+      }]);
+      setCurrentTask(data);
+    } catch(e) {
+      setChatMessages(prev => [...prev, { role:'agent', content:'Erro ao processar. Tente novamente.' }]);
+    }
+    setIsLoading(false);
+  }, [message]);
+
+  const handleApprove = useCallback(async () => {
+    if (!currentTask) return;
+    setHistory(prev => [{ ...currentTask, status:'deployed', createdAt: new Date().toISOString() }, ...prev]);
+    setCurrentTask(null);
+    setView('chat');
+    setChatMessages(prev => [...prev, { role:'agent', content:'Deploy realizado com sucesso.' }]);
+  }, [currentTask]);
+
+  const handleReject = useCallback(() => {
+    setCurrentTask(null);
+    setView('chat');
+    setChatMessages(prev => [...prev, { role:'agent', content:'Tarefa rejeitada.' }]);
+  }, []);
+
+  const handleRollback = useCallback((taskId) => {
+    setHistory(prev => prev.map(t => t.id === taskId ? { ...t, status:'rolled_back' } : t));
+  }, []);
+
+  const pendingCount = history.filter(t => t.status === 'pending_review').length;
+  const filteredHistory = historyFilter === 'all' ? history : history.filter(t => t.agent === historyFilter);
+
+  /* ─── STYLES ─── */
+  const S = {
+    app: { display:'flex', height:'100vh', width:'100vw', background:'linear-gradient(160deg, #0a0a0a 0%, #1a1a1a 30%, #2a2a2a 65%, #3d3d3d 100%)' },
+    sidebar: {
+      width:60, minWidth:60, display:'flex', flexDirection:'column', alignItems:'center',
+      paddingTop:16, gap:4, borderRight:'1px solid rgba(255,255,255,0.06)',
+      background:'rgba(0,0,0,0.3)'
+    },
+    sidebarBtn: (active) => ({
+      width:40, height:40, borderRadius:12, border:'none', cursor:'pointer',
+      display:'flex', alignItems:'center', justifyContent:'center',
+      background: active ? 'rgba(255,255,255,0.12)' : 'transparent',
+      color: active ? '#fff' : 'rgba(255,255,255,0.4)',
+      transition:'all .15s'
+    }),
+    badge: {
+      position:'absolute', top:-4, right:-4, width:16, height:16, borderRadius:8,
+      background:'#ef4444', color:'#fff', fontSize:9, fontWeight:700,
+      display:'flex', alignItems:'center', justifyContent:'center'
+    },
+    main: { flex:1, display:'flex', flexDirection:'column', overflow:'hidden' },
+    topbar: {
+      height:52, display:'flex', alignItems:'center', padding:'0 24px',
+      borderBottom:'1px solid rgba(255,255,255,0.06)',
+      background:'rgba(0,0,0,0.2)', backdropFilter:'blur(12px)',
+      gap:12
+    },
+    topTitle: { fontSize:14, fontWeight:700, color:'#fff', letterSpacing:'-0.3px' },
+    topSub: { fontSize:11, color:'rgba(255,255,255,0.4)', fontWeight:400 },
+    content: { flex:1, display:'flex', overflow:'hidden' },
+    chatCol: { flex:1, display:'flex', flexDirection:'column', overflow:'hidden' },
+    chatArea: { flex:1, padding:'20px 24px', overflowY:'auto' },
+    inputBar: {
+      padding:'12px 24px 16px', borderTop:'1px solid rgba(255,255,255,0.06)',
+      background:'rgba(0,0,0,0.15)'
+    },
+    inputRow: {
+      display:'flex', alignItems:'flex-end', gap:8, background:'#fff',
+      borderRadius:14, padding:'8px 8px 8px 16px',
+      boxShadow:'0 4px 24px rgba(0,0,0,0.15)'
+    },
+    textarea: {
+      flex:1, border:'none', outline:'none', resize:'none', fontFamily:'DM Sans',
+      fontSize:13, lineHeight:'1.6', background:'transparent', color:'#1a1a1a',
+      minHeight:20, maxHeight:120
+    },
+    sendBtn: {
+      width:34, height:34, borderRadius:10, border:'none', cursor:'pointer',
+      display:'flex', alignItems:'center', justifyContent:'center',
+      background:'#111', color:'#fff', transition:'all .15s', flexShrink:0
+    },
+    card: {
+      background:'#fff', borderRadius:16, padding:20,
+      boxShadow:'0 2px 20px rgba(0,0,0,0.08)',
+      animation:'fadeIn .3s ease'
+    },
+    chip: (color) => ({
+      display:'inline-flex', alignItems:'center', gap:5, padding:'5px 12px',
+      borderRadius:8, border:'none', cursor:'pointer', fontSize:11, fontWeight:600,
+      letterSpacing:'0.02em', background:`${color}15`, color: color,
+      transition:'all .15s'
+    }),
+    previewPanel: {
+      flex:1, borderLeft:'1px solid rgba(255,255,255,0.06)',
+      display:'flex', flexDirection:'column', overflow:'hidden',
+      animation:'slideRight .3s ease'
+    },
+    codeBlock: {
+      background:'#0f0f0f', borderRadius:10, padding:16, color:'#e2e8f0',
+      fontFamily:'JetBrains Mono, monospace', fontSize:11, lineHeight:'1.75',
+      whiteSpace:'pre-wrap', overflow:'auto', maxHeight:280
+    },
+    statusBadge: (status) => {
+      const s = STATUS_MAP[status] || STATUS_MAP.pending_review;
+      return {
+        display:'inline-flex', alignItems:'center', gap:4, padding:'3px 10px',
+        borderRadius:6, fontSize:10, fontWeight:700, letterSpacing:'0.06em',
+        background: s.bg, color: s.color
+      };
+    },
+    historyItem: {
+      display:'flex', alignItems:'center', gap:12, padding:'12px 16px',
+      borderRadius:12, background:'#fff', marginBottom:8,
+      boxShadow:'0 1px 6px rgba(0,0,0,0.05)', animation:'fadeIn .25s ease',
+      cursor:'default'
+    }
+  };
+
+  /* ─── SIDEBAR ─── */
+  const Sidebar = () => (
+    <div style={S.sidebar}>
+      <div style={{ width:36, height:36, borderRadius:10, background:'#111', display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontSize:13, fontWeight:800, letterSpacing:'-0.5px', marginBottom:12 }}>i9</div>
+      {[
+        { id:'chat', icon: Icon.Chat },
+        { id:'preview', icon: Icon.Preview },
+        { id:'history', icon: Icon.History },
+      ].map(item => (
+        <div key={item.id} style={{ position:'relative' }}>
+          <button style={S.sidebarBtn(view === item.id)} onClick={() => {
+            if (item.id === 'preview' && !currentTask) return;
+            setView(item.id);
+          }} title={item.id}>
+            <item.icon />
+          </button>
+          {item.id === 'history' && pendingCount > 0 && <div style={S.badge}>{pendingCount}</div>}
+        </div>
+      ))}
+    </div>
+  );
+
+  /* ─── CHAT VIEW ─── */
+  const ChatView = () => (
+    <div style={S.chatCol}>
+      <div style={{ ...S.chatArea }} className="scroll-area">
+        {chatMessages.length === 0 && (
+          <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', height:'100%', gap:16 }}>
+            <div style={{ width:56, height:56, borderRadius:16, background:'rgba(255,255,255,0.08)', display:'flex', alignItems:'center', justifyContent:'center' }}>
+              <span style={{ fontSize:24 }}>⚡</span>
+            </div>
+            <div style={{ textAlign:'center' }}>
+              <div style={{ fontSize:18, fontWeight:700, color:'#fff', letterSpacing:'-0.4px', marginBottom:6 }}>SF Agent</div>
+              <div style={{ fontSize:12, color:'rgba(255,255,255,0.45)', maxWidth:340, lineHeight:'1.6' }}>
+                Descreva uma tarefa de admin Salesforce. O agente interpreta, gera o artefato e aguarda sua aprovação antes do deploy.
+              </div>
+            </div>
+            <div style={{ display:'flex', flexWrap:'wrap', gap:6, justifyContent:'center', marginTop:8 }}>
+              {AGENTS.map(a => (
+                <button key={a.id} style={S.chip(a.color)} onClick={() => {
+                  setMessage(a.label);
+                  inputRef.current?.focus();
+                }}>
+                  <a.icon />{a.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {chatMessages.map((msg, i) => (
+          <div key={i} style={{ display:'flex', justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start', marginBottom:12, animation:'fadeIn .25s ease' }}>
+            {msg.role === 'agent' && (
+              <div style={{ width:28, height:28, borderRadius:8, background:'#111', display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontSize:10, fontWeight:800, marginRight:8, flexShrink:0, marginTop:2 }}>i9</div>
+            )}
+            <div style={{
+              maxWidth:480, padding:'10px 14px', borderRadius: msg.role === 'user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
+              background: msg.role === 'user' ? '#111' : '#fff',
+              color: msg.role === 'user' ? '#fff' : '#1a1a1a',
+              fontSize:13, lineHeight:'1.55',
+              boxShadow: msg.role === 'agent' ? '0 2px 12px rgba(0,0,0,0.06)' : 'none'
+            }}>
+              {msg.content}
+              {msg.task && (
+                <button onClick={() => { setCurrentTask(msg.task); setView('preview'); }}
+                  style={{ display:'block', marginTop:8, padding:'6px 14px', borderRadius:8, border:'none', cursor:'pointer', fontSize:11, fontWeight:600, background:'#f0f0f2', color:'#111', letterSpacing:'0.02em' }}>
+                  Revisar artefato →
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+        {isLoading && (
+          <div style={{ display:'flex', gap:8, alignItems:'center', marginBottom:12, animation:'fadeIn .2s' }}>
+            <div style={{ width:28, height:28, borderRadius:8, background:'#111', display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontSize:10, fontWeight:800 }}>i9</div>
+            <div style={{ padding:'10px 14px', borderRadius:'14px 14px 14px 4px', background:'#fff', boxShadow:'0 2px 12px rgba(0,0,0,0.06)' }}>
+              <div style={{ display:'flex', gap:4 }}>
+                {[0,1,2].map(d => <div key={d} style={{ width:6, height:6, borderRadius:3, background:'#999', animation:`pulse 1.2s ${d*0.2}s infinite` }}/>)}
+              </div>
+            </div>
+          </div>
+        )}
+        <div ref={chatEndRef}/>
+      </div>
+      <div style={S.inputBar}>
+        <div style={S.inputRow}>
+          <textarea ref={inputRef} style={S.textarea} placeholder="Descreva a tarefa..." rows={1}
+            value={message} onChange={e => setMessage(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }}}
+            onInput={e => { e.target.style.height = 'auto'; e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px'; }}
+          />
+          <button style={{ ...S.sendBtn, opacity: message.trim() ? 1 : 0.3 }} onClick={() => handleSend()} disabled={!message.trim()}>
+            <Icon.Send />
+          </button>
+        </div>
+        {chatMessages.length > 0 && (
+          <div style={{ display:'flex', flexWrap:'wrap', gap:5, marginTop:8 }}>
+            {AGENTS.slice(0,4).map(a => (
+              <button key={a.id} style={{ ...S.chip(a.color), fontSize:10, padding:'4px 10px' }}
+                onClick={() => handleSend(a.label, a.id)}>
+                <a.icon />{a.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  /* ─── PREVIEW VIEW ─── */
+  const PreviewView = () => {
+    if (!currentTask) return (
+      <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', color:'rgba(255,255,255,0.3)', fontSize:13 }}>
+        Nenhuma tarefa para revisar
+      </div>
+    );
+    const agent = AGENTS.find(a => a.id === currentTask.agent) || AGENTS[0];
+    return (
+      <div style={{ flex:1, display:'flex', overflow:'hidden' }}>
+        {/* Left — Task Details */}
+        <div style={{ flex:1, padding:20, overflowY:'auto' }} className="scroll-area">
+          <div style={S.card}>
+            <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:16 }}>
+              <div style={{ width:32, height:32, borderRadius:10, background:`${agent.color}15`, display:'flex', alignItems:'center', justifyContent:'center', color:agent.color }}>
+                <agent.icon />
+              </div>
+              <div>
+                <div style={{ fontSize:14, fontWeight:700, letterSpacing:'-0.3px' }}>Manage Task</div>
+                <div style={{ fontSize:11, color:'#6b7280' }}>{agent.label}</div>
+              </div>
+            </div>
+
+            <div style={{ marginBottom:16 }}>
+              <div style={{ fontSize:10, fontWeight:600, color:'#9ca3af', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:6 }}>Solicitação</div>
+              <div style={{ fontSize:13, lineHeight:'1.55', color:'#374151', padding:'10px 14px', background:'#f9fafb', borderRadius:10 }}>
+                {currentTask.intent}
+              </div>
+            </div>
+
+            <div style={{ marginBottom:16 }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+                <div style={{ fontSize:10, fontWeight:600, color:'#9ca3af', letterSpacing:'0.06em', textTransform:'uppercase' }}>Artefato — {currentTask.artifact.type}</div>
+                <span style={{ fontSize:10, color:'#9ca3af' }}>{currentTask.artifact.language}</span>
+              </div>
+              <div style={S.codeBlock}>{currentTask.artifact.code}</div>
+            </div>
+
+            <div style={{ marginBottom:20 }}>
+              <div style={{ fontSize:10, fontWeight:600, color:'#9ca3af', letterSpacing:'0.06em', textTransform:'uppercase', marginBottom:8 }}>Validação Sandbox</div>
+              <div style={{ display:'flex', alignItems:'center', gap:8, padding:'10px 14px', background:'#f0fdf4', borderRadius:10, border:'1px solid #bbf7d0' }}>
+                <Icon.Check />
+                <span style={{ fontSize:12, fontWeight:600, color:'#15803d' }}>Validação passou — pronto para deploy</span>
+              </div>
+            </div>
+
+            <div style={{ display:'flex', gap:8 }}>
+              <button onClick={handleReject} style={{ flex:1, padding:'10px 0', borderRadius:10, border:'1px solid #e5e7eb', background:'#fff', cursor:'pointer', fontSize:12, fontWeight:600, color:'#6b7280', display:'flex', alignItems:'center', justifyContent:'center', gap:5 }}>
+                <Icon.X /> Rejeitar
+              </button>
+              <button style={{ flex:1, padding:'10px 0', borderRadius:10, border:'1px solid #e5e7eb', background:'#fff', cursor:'pointer', fontSize:12, fontWeight:600, color:'#6b7280', display:'flex', alignItems:'center', justifyContent:'center', gap:5 }}>
+                <Icon.Edit /> Editar
+              </button>
+              <button onClick={handleApprove} style={{ flex:1.5, padding:'10px 0', borderRadius:10, border:'none', cursor:'pointer', fontSize:12, fontWeight:700, color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', gap:5, background:'linear-gradient(135deg,#111,#333)', boxShadow:'0 4px 16px rgba(0,0,0,0.2)' }}>
+                <Icon.Check /> Aprovar e deployar
+              </button>
+            </div>
+          </div>
+        </div>
+        {/* Right — Conversation Preview */}
+        <div style={S.previewPanel}>
+          <div style={{ padding:20, overflowY:'auto', flex:1 }} className="scroll-area">
+            <div style={S.card}>
+              <div style={{ fontSize:14, fontWeight:700, letterSpacing:'-0.3px', marginBottom:16 }}>Conversation Preview</div>
+              <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+                <div style={{ padding:'10px 14px', borderRadius:'14px 14px 4px 14px', background:'#f3f4f6', fontSize:12, lineHeight:'1.55', maxWidth:'85%', alignSelf:'flex-end' }}>
+                  {currentTask.intent}
+                </div>
+                <div style={{ display:'flex', gap:8 }}>
+                  <div style={{ width:24, height:24, borderRadius:6, background:'#111', display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontSize:9, fontWeight:800, flexShrink:0 }}>i9</div>
+                  <div style={{ padding:'10px 14px', borderRadius:'4px 14px 14px 14px', background:'#f9fafb', border:'1px solid #f0f0f2', fontSize:12, lineHeight:'1.55', maxWidth:'85%' }}>
+                    Analisei sua solicitação. Vou usar o <strong>{AGENTS.find(a=>a.id===currentTask.agent)?.label || 'Agent'}</strong> para gerar o artefato. O resultado está pronto para sua aprovação no painel ao lado.
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ marginTop:20 }}>
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', cursor:'pointer', padding:'8px 0', borderTop:'1px solid #f0f0f2' }}>
+                  <span style={{ fontSize:11, fontWeight:600, color:'#6b7280' }}>Detalhes do Artefato</span>
+                  <Icon.ChevronDown />
+                </div>
+                <div style={{ padding:'8px 0', borderTop:'1px solid #f0f0f2' }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
+                    <span style={{ fontSize:11, color:'#9ca3af' }}>Tipo</span>
+                    <span style={{ fontSize:11, fontWeight:600 }}>{currentTask.artifact.type}</span>
+                  </div>
+                  <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
+                    <span style={{ fontSize:11, color:'#9ca3af' }}>Agente</span>
+                    <span style={{ fontSize:11, fontWeight:600 }}>{currentTask.agentName}</span>
+                  </div>
+                  <div style={{ display:'flex', justifyContent:'space-between' }}>
+                    <span style={{ fontSize:11, color:'#9ca3af' }}>Status</span>
+                    <span style={S.statusBadge('pending_review')}>{STATUS_MAP.pending_review.label}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  /* ─── HISTORY VIEW ─── */
+  const HistoryView = () => (
+    <div style={{ flex:1, padding:20, overflowY:'auto' }} className="scroll-area">
+      <div style={{ maxWidth:720, margin:'0 auto' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
+          <div>
+            <div style={{ fontSize:18, fontWeight:700, color:'#fff', letterSpacing:'-0.4px' }}>Histórico</div>
+            <div style={{ fontSize:11, color:'rgba(255,255,255,0.4)' }}>{history.length} tarefas registradas</div>
+          </div>
+          <select value={historyFilter} onChange={e => setHistoryFilter(e.target.value)}
+            style={{ padding:'6px 12px', borderRadius:8, border:'1px solid rgba(255,255,255,0.1)', background:'rgba(255,255,255,0.06)', color:'#fff', fontSize:11, fontFamily:'DM Sans', outline:'none', cursor:'pointer' }}>
+            <option value="all" style={{color:'#111'}}>Todos os agentes</option>
+            {AGENTS.map(a => <option key={a.id} value={a.id} style={{color:'#111'}}>{a.label}</option>)}
+          </select>
+        </div>
+        {filteredHistory.map((task, i) => {
+          const agent = AGENTS.find(a => a.id === task.agent) || AGENTS[0];
+          const st = STATUS_MAP[task.status] || STATUS_MAP.pending_review;
+          return (
+            <div key={task.id} style={{ ...S.historyItem, animationDelay:`${i*50}ms` }}>
+              <div style={{ width:32, height:32, borderRadius:10, background:`${agent.color}15`, display:'flex', alignItems:'center', justifyContent:'center', color:agent.color, flexShrink:0 }}>
+                <agent.icon />
+              </div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:12, fontWeight:600, letterSpacing:'-0.2px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{task.intent}</div>
+                <div style={{ fontSize:10, color:'#9ca3af', marginTop:2 }}>
+                  {agent.label} · {new Date(task.createdAt).toLocaleString('pt-BR', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' })}
+                </div>
+              </div>
+              <span style={S.statusBadge(task.status)}>{st.label}</span>
+              {task.status === 'failed' && (
+                <button onClick={() => handleRollback(task.id)}
+                  style={{ display:'flex', alignItems:'center', gap:4, padding:'4px 10px', borderRadius:6, border:'1px solid #e5e7eb', background:'#fff', cursor:'pointer', fontSize:10, fontWeight:600, color:'#6b7280', marginLeft:4 }}>
+                  <Icon.Undo /> Rollback
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  /* ─── RENDER ─── */
+  return (
+    <div style={S.app}>
+      <Sidebar />
+      <div style={S.main}>
+        <div style={S.topbar}>
+          {view === 'preview' && (
+            <button onClick={() => setView('chat')} style={{ background:'none', border:'none', color:'rgba(255,255,255,0.5)', cursor:'pointer', display:'flex', alignItems:'center', marginRight:4 }}>
+              <Icon.ArrowLeft />
+            </button>
+          )}
+          <div>
+            <div style={S.topTitle}>
+              {view === 'chat' && 'SF Agent'}
+              {view === 'preview' && 'Preview & Aprovação'}
+              {view === 'history' && 'Histórico de Tasks'}
+            </div>
+            <div style={S.topSub}>
+              {view === 'chat' && 'AI Salesforce Admin Automation'}
+              {view === 'preview' && 'Revise antes do deploy'}
+              {view === 'history' && `${history.length} execuções`}
+            </div>
+          </div>
+          {pendingCount > 0 && view === 'chat' && (
+            <button onClick={() => setView('history')}
+              style={{ marginLeft:'auto', padding:'5px 12px', borderRadius:8, border:'none', cursor:'pointer', fontSize:10, fontWeight:600, background:'#fef3c7', color:'#92400e', display:'flex', alignItems:'center', gap:4 }}>
+              {pendingCount} pendente{pendingCount > 1 ? 's' : ''}
+            </button>
+          )}
+        </div>
+        <div style={S.content}>
+          {view === 'chat' && <ChatView />}
+          {view === 'preview' && <PreviewView />}
+          {view === 'history' && <HistoryView />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</head>
+<body><div id="root"></div></body>
+</html>
