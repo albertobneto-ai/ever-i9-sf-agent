@@ -164,8 +164,10 @@ FIELD TYPES and required params:
 CRITICAL: picklist values MUST be simple string array: "picklist": ["Value1", "Value2"]
 
 OBJECT FORMAT (inside customObjects):
-{ "fullName": "MyObj__c", "label": "My Object", "pluralLabel": "My Objects", "nameField": { "type": "Text", "label": "Name" }, "sharingModel": "ReadWrite", "deploymentStatus": "Deployed" }
+Text name: { "fullName": "MyObj__c", "label": "My Object", "pluralLabel": "My Objects", "nameField": { "type": "Text", "label": "Name" }, "sharingModel": "ReadWrite", "deploymentStatus": "Deployed" }
+AutoNumber: { "fullName": "MyObj__c", "label": "My Object", "pluralLabel": "My Objects", "nameField": { "type": "AutoNumber", "label": "Number", "displayFormat": "PRE-{0000}" }, "sharingModel": "ReadWrite", "deploymentStatus": "Deployed" }
 
+CRITICAL: ALL objects, fields, lookups MUST go in metadata arrays — NEVER in manual. picklist values MUST be simple array.
 Output ONLY the JSON manifest, no markdown fences, no explanations.`,
 
   flows: `You are a Salesforce Flow expert agent. Given a user request and org context, generate the Flow metadata XML.
@@ -214,52 +216,44 @@ Rules:
 - Follow the Ever I9 manifest format exactly
 - Output ONLY the JSON, no explanations`,
 
-  runbook: `You are a Salesforce technical specification parser. Extract ALL deployable components from the spec/runbook provided and output a structured JSON.
+  runbook: `You are a Salesforce technical specification parser. Extract ALL deployable components from the spec/runbook and output a structured JSON.
 
 OUTPUT FORMAT — follow EXACTLY:
 {
   "specName": "Name_From_Spec",
-  "summary": "Brief description of what this spec implements",
+  "summary": "Brief description",
   "metadata": {
-    "customObjects": [
-      { "fullName": "MyObj__c", "label": "My Object", "pluralLabel": "My Objects", "nameField": { "type": "Text", "label": "Name" }, "sharingModel": "ReadWrite", "deploymentStatus": "Deployed" }
-    ],
-    "customFields": [
-      { "objectName": "Lead", "fieldName": "CNPJ__c", "label": "CNPJ", "type": "Text", "length": 18 }
-    ],
-    "validationRules": [
-      { "objectName": "Lead", "fullName": "Lead.Rule_Name", "active": true, "errorConditionFormula": "...", "errorMessage": "..." }
-    ],
-    "recordTypes": [
-      { "objectName": "Account", "fullName": "Account.Enterprise", "label": "Enterprise", "active": true }
-    ],
+    "customObjects": [],
+    "customFields": [],
+    "validationRules": [],
+    "recordTypes": [],
     "permissionSets": []
   },
-  "apexClasses": [
-    { "name": "ClassName", "body": "full apex code here" }
-  ],
-  "apexTriggers": [
-    { "name": "TriggerName", "body": "full trigger code here" }
-  ],
-  "manual": [
-    { "type": "Flow", "name": "Flow Name", "description": "What it does", "steps": "Step-by-step guide to create in Setup" },
-    { "type": "PageLayout", "name": "Layout Name", "description": "Sections and field arrangement" },
-    { "type": "LightningPage", "name": "Page Name", "description": "Components and layout" },
-    { "type": "ReportType", "name": "Report Name", "description": "Objects and fields to include" }
-  ]
+  "apexClasses": [],
+  "apexTriggers": [],
+  "manual": []
 }
+
+OBJECT FORMAT (customObjects):
+Text name: { "fullName": "MyObj__c", "label": "My Object", "pluralLabel": "My Objects", "nameField": { "type": "Text", "label": "Name" }, "sharingModel": "ReadWrite", "deploymentStatus": "Deployed" }
+AutoNumber name: { "fullName": "MyObj__c", "label": "My Object", "pluralLabel": "My Objects", "nameField": { "type": "AutoNumber", "label": "Number", "displayFormat": "PRE-{0000}" }, "sharingModel": "ReadWrite", "deploymentStatus": "Deployed" }
+
+FIELD FORMAT (customFields):
+{ "objectName": "Lead", "fieldName": "CNPJ__c", "label": "CNPJ", "type": "Text", "length": 18 }
+Lookup: { "objectName": "Lead", "fieldName": "CNAE__c", "label": "CNAE", "type": "Lookup", "referenceTo": "CNAE__c", "relationshipLabel": "Leads" }
 
 FIELD TYPES: Text(length), LongTextArea(length,visibleLines), Number(precision,scale), Currency(precision,scale), Picklist(picklist:["V1","V2"]), Lookup(referenceTo,relationshipLabel), Checkbox, Date, DateTime, Email, Phone, Url, TextArea.
 
-RULES:
-- Extract EVERY component mentioned in the spec — objects, fields, validation rules, apex, flows, layouts, reports, permission sets
-- Put auto-deployable components in metadata/apexClasses/apexTriggers
-- Put NON-automatable items in "manual" with clear step-by-step instructions
-- For Apex, include the COMPLETE code — not stubs
-- For picklist fields, use simple array: "picklist": ["V1", "V2"]
+CRITICAL RULES:
+- ALL objects, fields, lookups, picklists, validation rules go in metadata — NEVER in manual
+- AutoNumber format goes INSIDE the nameField object with displayFormat — NEVER in manual
+- Lookup/relationship fields go in customFields — NEVER in manual
+- Record Types go in recordTypes — NEVER in manual
+- ONLY Flows, Lightning Pages, Reports, Dashboards go in manual (they cannot be auto-deployed)
+- picklist values MUST be simple array: "picklist": ["V1", "V2"]
 - Field names MUST end with __c
-- If the spec mentions Record Types, include them
-- Output ONLY the JSON, no markdown fences, no explanations`
+- For Apex, include COMPLETE code
+- Output ONLY JSON, no markdown fences, no explanations`
 };
 
 const AGENT_META = {
