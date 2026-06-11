@@ -63,6 +63,7 @@ const ST={
   deployed:{label:'DEPLOYADO',color:'#10b981',bg:'#d1fae5'},
   failed:{label:'FALHOU',color:'#ef4444',bg:'#fee2e2'},
   rolled_back:{label:'REVERTIDO',color:'#6b7280',bg:'#f3f4f6'},
+  pending_manual:{label:'MANUAL',color:'#8b5cf6',bg:'#ede9fe'},
 };
 
 function App(){
@@ -120,14 +121,34 @@ function App(){
     setTimeout(()=>inputRef.current?.focus(),50);
   },[message]);
 
+  const [deploying,setDeploying]=useState(false);
+
   const doApprove=useCallback(async()=>{
     if(!curTask)return;
+    setDeploying(true);
     try{
-      await fetch('/api/approve/'+curTask.taskId,{method:'POST'});
-      setHistory(p=>[{...curTask,status:'deployed',deployedAt:new Date().toISOString()},...p]);
-    }catch(e){}
+      const r=await fetch('/api/approve/'+curTask.taskId,{method:'POST'});
+      const text=await r.text();
+      let data;
+      try{data=JSON.parse(text);}catch(e){throw new Error('Resposta inválida');}
+
+      const compName=data.componentName||'Componente';
+      const compKind=data.componentKind||'';
+
+      if(data.status==='deployed'){
+        setHistory(p=>[data,...p.filter(t=>t.taskId!==data.taskId)]);
+        setChatMsgs(p=>[...p,{role:'agent',content:`Deploy realizado com sucesso: ${compKind} "${compName}" criado na org.`}]);
+      } else if(data.status==='failed'){
+        setHistory(p=>[data,...p.filter(t=>t.taskId!==data.taskId)]);
+        setChatMsgs(p=>[...p,{role:'agent',content:`Deploy falhou para ${compKind} "${compName}": ${data.deployError||'erro desconhecido'}. Tente refinar o artefato.`}]);
+      } else if(data.status==='pending_manual'){
+        setChatMsgs(p=>[...p,{role:'agent',content:`${compKind} "${compName}": ${data.deployNote}`}]);
+      }
+    }catch(e){
+      setChatMsgs(p=>[...p,{role:'agent',content:'Erro no deploy: '+e.message}]);
+    }
     setCurTask(null);setView('chat');
-    setChatMsgs(p=>[...p,{role:'agent',content:'Deploy realizado com sucesso.'}]);
+    setDeploying(false);
   },[curTask]);
 
   const doReject=useCallback(()=>{
@@ -297,7 +318,7 @@ function App(){
                     <div style={{display:'flex',gap:8}}>
                       <button onClick={doReject} style={{flex:1,padding:'10px 0',borderRadius:10,border:'1px solid #e5e7eb',background:'#fff',cursor:'pointer',fontSize:12,fontWeight:600,color:'#6b7280',display:'flex',alignItems:'center',justifyContent:'center',gap:5}}><Ico.X/> Rejeitar</button>
                       <button onClick={()=>{setShowRefine(true);setTimeout(()=>refineRef.current?.focus(),100);}} style={{flex:1,padding:'10px 0',borderRadius:10,border:'1px solid #e5e7eb',background:'#fff',cursor:'pointer',fontSize:12,fontWeight:600,color:'#6b7280',display:'flex',alignItems:'center',justifyContent:'center',gap:5}}><Ico.Zap/> Refinar com IA</button>
-                      <button onClick={doApprove} style={{flex:1.5,padding:'10px 0',borderRadius:10,border:'none',cursor:'pointer',fontSize:12,fontWeight:700,color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',gap:5,background:'linear-gradient(135deg,#111,#333)',boxShadow:'0 4px 16px rgba(0,0,0,0.2)'}}><Ico.Check/> Aprovar e deployar</button>
+                      <button onClick={doApprove} disabled={deploying} style={{flex:1.5,padding:'10px 0',borderRadius:10,border:'none',cursor:deploying?'wait':'pointer',fontSize:12,fontWeight:700,color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',gap:5,background:deploying?'#666':'linear-gradient(135deg,#111,#333)',boxShadow:'0 4px 16px rgba(0,0,0,0.2)'}}>{deploying?'Deployando...':(<><Ico.Check/> Aprovar e deployar</>)}</button>
                     </div>
                     {/* REFINE POPUP */}
                     {showRefine&&(
@@ -374,8 +395,8 @@ function App(){
                       onMouseLeave={e=>e.currentTarget.style.boxShadow='0 1px 6px rgba(0,0,0,0.05)'}>
                       <div style={{width:32,height:32,borderRadius:10,background:`${ag.color}15`,display:'flex',alignItems:'center',justifyContent:'center',color:ag.color,flexShrink:0}}><ag.icon/></div>
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:12,fontWeight:600,letterSpacing:'-0.2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{task.intent}</div>
-                        <div style={{fontSize:10,color:'#9ca3af',marginTop:2}}>{ag.label} · {new Date(task.createdAt).toLocaleString('pt-BR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
+                        <div style={{fontSize:12,fontWeight:600,letterSpacing:'-0.2px',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{task.componentName||task.intent}</div>
+                        <div style={{fontSize:10,color:'#9ca3af',marginTop:2}}>{task.componentKind?task.componentKind+' · ':''}{ag.label} · {new Date(task.createdAt).toLocaleString('pt-BR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</div>
                       </div>
                       <span style={badge(task.status)}>{st.label}</span>
                       {task.status==='failed'&&<button onClick={e=>{e.stopPropagation();doRollback(task.taskId);}} style={{display:'flex',alignItems:'center',gap:4,padding:'4px 10px',borderRadius:6,border:'1px solid #e5e7eb',background:'#fff',cursor:'pointer',fontSize:10,fontWeight:600,color:'#6b7280',marginLeft:4}}><Ico.Undo/> Rollback</button>}

@@ -302,15 +302,152 @@ app.get('/api/tasks', (req, res) => {
   res.json({ tasks: list, total: list.length });
 });
 
-// Approve
+// ─── MCP Server Proxy for Real Deploy ───────
+const MCP_BASE = 'https://mcp-sf-provisioning-462dd29c2455.herokuapp.com';
+
+function mcpRequest(path, body) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { req.destroy(); reject(new Error('MCP timeout (25s)')); }, 25000);
+    const data = JSON.stringify(body);
+    const url = new URL(MCP_BASE + path);
+    const req = https.request({
+      hostname: url.hostname, path: url.pathname, method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) }
+    }, res => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => { clearTimeout(timer); try { resolve(JSON.parse(d)); } catch(e) { reject(new Error(d.substring(0,200))); } });
+    });
+    req.on('error', e => { clearTimeout(timer); reject(e); });
+    req.write(data);
+    req.end();
+  });
+}
+
+function cleanCode(code) {
+  return code.replace(/^```[\w]*\n?/, '').replace(/\n?```\s*$/, '').trim();
+}
+
+function extractApexName(code) {
+  // Trigger: trigger Name on Object
+  const trigMatch = code.match(/trigger\s+(\w+)\s+on\s+/i);
+  if (trigMatch) return { name: trigMatch[1], isTrigger: true };
+  // Class: public class Name | global class Name
+  const clsMatch = code.match(/(?:public|global|private)\s+(?:with\s+sharing\s+|without\s+sharing\s+|virtual\s+|abstract\s+)*class\s+(\w+)/i);
+  if (clsMatch) return { name: clsMatch[1], isTrigger: false };
+  return { name: 'GeneratedComponent', isTrigger: false };
+}
+
+function extractComponentName(task) {
+  const code = cleanCode(task.artifact.code);
+  const type = task.artifact.type;
+
+  if (type === 'ApexClass') {
+    const { name, isTrigger } = extractApexName(code);
+    return { name, kind: isTrigger ? 'ApexTrigger' : 'ApexClass' };
+  }
+  if (type === 'ValidationRule') {
+    try {
+      const j = JSON.parse(code);
+      return { name: j.fullName || j.objectName + '.' + (j.fullName || 'Rule'), kind: 'ValidationRule', meta: j };
+    } catch(e) { return { name: 'ValidationRule', kind: 'ValidationRule' }; }
+  }
+  if (type === 'PermissionSet') {
+    try {
+      const j = JSON.parse(code);
+      return { name: j.label || 'PermissionSet', kind: 'PermissionSet', meta: j };
+    } catch(e) { return { name: 'PermissionSet', kind: 'PermissionSet' }; }
+  }
+  if (type === 'Flow') {
+    const labelMatch = code.match(/<label>([^<]+)<\/label>/);
+    return { name: labelMatch ? labelMatch[1] : 'Flow', kind: 'Flow' };
+  }
+  if (type === 'Manifest') {
+    try {
+      const j = JSON.parse(code);
+      return { name: j.specName || 'Manifest', kind: 'Manifest', meta: j };
+    } catch(e) { return { name: 'Manifest', kind: 'Manifest' }; }
+  }
+  return { name: task.agentName, kind: type };
+}
+
+// Approve — REAL DEPLOY to Salesforce via MCP server
 app.post('/api/approve/:id', async (req, res) => {
   const task = tasks.get(req.params.id);
   if (!task) return res.status(404).json({ error: 'Task not found' });
 
-  // TODO: real deploy via jsforce metadata API
-  task.status = 'deployed';
-  task.deployedAt = new Date().toISOString();
-  res.json(task);
+  const code = cleanCode(task.artifact.code);
+  const comp = extractComponentName(task);
+  task.componentName = comp.name;
+  task.componentKind = comp.kind;
+
+  try {
+    let deployResult;
+
+    if (comp.kind === 'ApexClass') {
+      console.log('[Deploy] ApexClass:', comp.name);
+      deployResult = await mcpRequest('/api/deploy-code', {
+        apexClasses: [{ name: comp.name, body: code }]
+      });
+    }
+    else if (comp.kind === 'ApexTrigger') {
+      console.log('[Deploy] ApexTrigger:', comp.name);
+      deployResult = await mcpRequest('/api/deploy-code', {
+        apexTriggers: [{ name: comp.name, body: code }]
+      });
+    }
+    else if (comp.kind === 'ValidationRule' && comp.meta) {
+      console.log('[Deploy] ValidationRule:', comp.name);
+      const vr = comp.meta;
+      // Deploy via manifest
+      deployResult = await mcpRequest('/api/deploy-code', {
+        validationRules: [{
+          objectName: vr.objectName,
+          fullName: vr.fullName?.includes('.') ? vr.fullName : (vr.objectName + '.' + vr.fullName),
+          active: vr.active !== false,
+          errorConditionFormula: vr.errorConditionFormula,
+          errorMessage: vr.errorMessage,
+          errorDisplayField: vr.errorDisplayField
+        }]
+      });
+    }
+    else if (comp.kind === 'Manifest' && comp.meta) {
+      console.log('[Deploy] Manifest:', comp.name);
+      const b64 = Buffer.from(JSON.stringify(comp.meta)).toString('base64');
+      // Use GET deploy-b64 via https
+      deployResult = await new Promise((resolve, reject) => {
+        https.get(MCP_BASE + '/api/deploy-b64/' + b64, r => {
+          let d = ''; r.on('data', c => d += c);
+          r.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { reject(new Error(d.substring(0,200))); } });
+        }).on('error', reject);
+      });
+    }
+    else {
+      // Generic — return as preview only (no auto-deploy for flows/docs/permsets yet)
+      task.status = 'pending_manual';
+      task.deployNote = 'Este tipo requer deploy manual. Copie o artefato e aplique via Setup.';
+      return res.json(task);
+    }
+
+    console.log('[Deploy] Result:', JSON.stringify(deployResult).substring(0, 300));
+
+    if (deployResult?.error || deployResult?.status === 'error') {
+      task.status = 'failed';
+      task.deployError = deployResult.error || deployResult.message || 'Deploy failed';
+      task.deployedAt = new Date().toISOString();
+    } else {
+      task.status = 'deployed';
+      task.deployResult = deployResult;
+      task.deployedAt = new Date().toISOString();
+    }
+
+    res.json(task);
+  } catch (err) {
+    console.error('[Deploy Error]', err.message);
+    task.status = 'failed';
+    task.deployError = err.message;
+    res.json(task);
+  }
 });
 
 // Rollback
