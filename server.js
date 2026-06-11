@@ -551,7 +551,7 @@ app.post('/api/approve/:id', async (req, res) => {
             if (field.precision) fieldMeta.precision = field.precision;
             if (field.scale !== undefined) fieldMeta.scale = field.scale;
             if (field.visibleLines) fieldMeta.visibleLines = field.visibleLines;
-            if (field.referenceTo) { fieldMeta.referenceTo = field.referenceTo; fieldMeta.relationshipLabel = field.relationshipLabel || field.referenceTo + 's'; }
+            if (field.referenceTo) { fieldMeta.referenceTo = field.referenceTo; fieldMeta.relationshipLabel = field.relationshipLabel || field.referenceTo.replace('__c','') + 's'; fieldMeta.relationshipName = field.relationshipName || field.fieldName.replace('__c',''); }
 
             // Convert picklist array to valueSet format (Metadata API v62+)
             if (field.picklist && Array.isArray(field.picklist)) {
@@ -660,7 +660,7 @@ app.post('/api/approve/:id', async (req, res) => {
             if (field.precision) fieldMeta.precision = field.precision;
             if (field.scale !== undefined) fieldMeta.scale = field.scale;
             if (field.visibleLines) fieldMeta.visibleLines = field.visibleLines;
-            if (field.referenceTo) { fieldMeta.referenceTo = field.referenceTo; fieldMeta.relationshipLabel = field.relationshipLabel || field.referenceTo + 's'; }
+            if (field.referenceTo) { fieldMeta.referenceTo = field.referenceTo; fieldMeta.relationshipLabel = field.relationshipLabel || field.referenceTo.replace('__c','') + 's'; fieldMeta.relationshipName = field.relationshipName || field.fieldName.replace('__c',''); }
             if (field.picklist && Array.isArray(field.picklist)) {
               fieldMeta.valueSet = { restricted: false, valueSetDefinition: { value: field.picklist.map((v, i) => ({ fullName: v, label: v, default: i === 0 })) } };
             }
