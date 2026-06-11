@@ -456,14 +456,66 @@ app.post('/api/approve/:id', async (req, res) => {
     }
     else if (comp.kind === 'Manifest' && comp.meta) {
       console.log('[Deploy] Manifest:', comp.name);
-      const b64 = Buffer.from(JSON.stringify(comp.meta)).toString('base64');
-      // Use GET deploy-b64 via https
-      deployResult = await new Promise((resolve, reject) => {
-        https.get(MCP_BASE + '/api/deploy-b64/' + b64, r => {
-          let d = ''; r.on('data', c => d += c);
-          r.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { reject(new Error(d.substring(0,200))); } });
-        }).on('error', reject);
-      });
+      const manifest = comp.meta;
+      const results = [];
+
+      // Deploy custom objects
+      if (manifest.metadata?.customObjects?.length) {
+        for (const obj of manifest.metadata.customObjects) {
+          try {
+            const r = await mcpRequest('/api/metadata-create/CustomObject', obj);
+            results.push({ type: 'CustomObject', name: obj.fullName, success: r.success !== false, detail: r });
+          } catch (e) { results.push({ type: 'CustomObject', name: obj.fullName, success: false, error: e.message }); }
+        }
+      }
+
+      // Deploy custom fields via metadata-create (more reliable than deploy-b64)
+      if (manifest.metadata?.customFields?.length) {
+        for (const field of manifest.metadata.customFields) {
+          try {
+            const fieldMeta = {
+              fullName: field.objectName + '.' + field.fieldName,
+              label: (field.label || field.fieldName).replace(/__c$/, '').replace(/_/g, ' '),
+              type: field.type,
+              ...(field.length && { length: field.length }),
+              ...(field.precision && { precision: field.precision }),
+              ...(field.scale !== undefined && { scale: field.scale }),
+              ...(field.visibleLines && { visibleLines: field.visibleLines }),
+              ...(field.referenceTo && { referenceTo: field.referenceTo, relationshipLabel: field.relationshipLabel || field.referenceTo + 's' }),
+              ...(field.picklist && { picklist: field.picklist })
+            };
+            const r = await mcpRequest('/api/metadata-create/CustomField', fieldMeta);
+            results.push({ type: 'CustomField', name: fieldMeta.fullName, success: r.success !== false, detail: r });
+
+            // Auto-add to layout
+            try {
+              await mcpRequest('/api/devtools/add-to-layout', {
+                objectName: field.objectName,
+                fieldName: field.fieldName
+              });
+            } catch(e) { console.warn('[Deploy] add-to-layout skipped:', e.message); }
+          } catch (e) { results.push({ type: 'CustomField', name: field.fieldName, success: false, error: e.message }); }
+        }
+      }
+
+      // Deploy validation rules
+      if (manifest.metadata?.validationRules?.length) {
+        for (const vr of manifest.metadata.validationRules) {
+          try {
+            const r = await mcpRequest('/api/metadata-create/ValidationRule', vr);
+            results.push({ type: 'ValidationRule', name: vr.fullName, success: r.success !== false, detail: r });
+          } catch (e) { results.push({ type: 'ValidationRule', name: vr.fullName, success: false, error: e.message }); }
+        }
+      }
+
+      const successCount = results.filter(r => r.success).length;
+      const failCount = results.filter(r => !r.success).length;
+      deployResult = {
+        success: failCount === 0,
+        summary: { total: results.length, success: successCount, failed: failCount },
+        components: results.map(r => r.name + (r.success ? ' ✓' : ' ✗')),
+        details: results
+      };
     }
     else {
       // Generic — return as preview only (no auto-deploy for flows/docs/permsets yet)
@@ -472,11 +524,14 @@ app.post('/api/approve/:id', async (req, res) => {
       return res.json(task);
     }
 
-    console.log('[Deploy] Result:', JSON.stringify(deployResult).substring(0, 300));
+    console.log('[Deploy] Result:', JSON.stringify(deployResult).substring(0, 500));
 
-    if (deployResult?.error || deployResult?.status === 'error') {
+    const isFailed = deployResult?.success === false || deployResult?.error || deployResult?.status === 'error';
+    if (isFailed && !deployResult?.summary?.success) {
       task.status = 'failed';
-      task.deployError = deployResult.error || deployResult.message || 'Deploy failed';
+      task.deployError = deployResult.error || deployResult.message || 
+        (deployResult.components ? 'Falhou: ' + deployResult.components.filter(c=>c.includes('✗')).join(', ') : 'Deploy failed');
+      task.deployResult = deployResult;
       task.deployedAt = new Date().toISOString();
     } else {
       task.status = 'deployed';

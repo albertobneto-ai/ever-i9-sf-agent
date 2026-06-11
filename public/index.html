@@ -137,8 +137,9 @@ function App(){
       const compKind=data.componentKind||'';
 
       if(data.status==='deployed'){
+        const comps=data.deployResult?.components?.join(', ')||'';
         setHistory(p=>[data,...p.filter(t=>t.taskId!==data.taskId)]);
-        setChatMsgs(p=>[...p,{role:'agent',content:`Deploy realizado com sucesso: ${compKind} "${compName}" criado na org.`}]);
+        setChatMsgs(p=>[...p,{role:'agent',content:`Deploy realizado: ${compKind} "${compName}"${comps?' — '+comps:''} criado na org.`}]);
       } else if(data.status==='failed'){
         setHistory(p=>[data,...p.filter(t=>t.taskId!==data.taskId)]);
         setChatMsgs(p=>[...p,{role:'agent',content:`Deploy falhou para ${compKind} "${compName}": ${data.deployError||'erro desconhecido'}. Tente refinar o artefato.`}]);
