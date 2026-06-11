@@ -64,11 +64,16 @@ async function getSfConnection() {
   return conn;
 }
 
-// ─── Claude API Helper ──────────────────────
-function callClaude(systemPrompt, userMessage, maxTokens = 4096) {
+// ─── Claude API Helper (20s timeout for Heroku 30s limit) ───
+function callClaude(systemPrompt, userMessage, maxTokens = 2048) {
   return new Promise((resolve, reject) => {
     const apiKey = process.env.ANTHROPIC_KEY;
     if (!apiKey) return reject(new Error('ANTHROPIC_KEY not configured'));
+
+    const timer = setTimeout(() => {
+      req.destroy();
+      reject(new Error('Claude API timeout (20s)'));
+    }, 20000);
 
     const body = JSON.stringify({
       model: 'claude-sonnet-4-6',
@@ -90,6 +95,7 @@ function callClaude(systemPrompt, userMessage, maxTokens = 4096) {
       let d = '';
       res.on('data', c => d += c);
       res.on('end', () => {
+        clearTimeout(timer);
         try {
           const j = JSON.parse(d);
           if (j.error) return reject(new Error(j.error.message || JSON.stringify(j.error)));
@@ -100,7 +106,7 @@ function callClaude(systemPrompt, userMessage, maxTokens = 4096) {
         } catch (e) { reject(e); }
       });
     });
-    req.on('error', reject);
+    req.on('error', e => { clearTimeout(timer); reject(e); });
     req.write(body);
     req.end();
   });
@@ -221,22 +227,18 @@ app.post('/api/chat', async (req, res) => {
       // Get relevant objects based on message
       const objects = extractObjectNames(message);
       const describes = [];
-      for (const obj of objects.slice(0, 3)) {
+      for (const obj of objects.slice(0, 2)) {
         try {
           const desc = await conn.describe(obj);
           describes.push({
             name: desc.name,
-            label: desc.label,
-            fields: desc.fields.slice(0, 40).map(f => ({
-              name: f.name, label: f.label, type: f.type,
-              referenceTo: f.referenceTo?.length ? f.referenceTo : undefined
-            })),
-            recordTypes: desc.recordTypeInfos?.filter(rt => rt.available).map(rt => ({ name: rt.name, id: rt.recordTypeId }))
+            fields: desc.fields.slice(0, 20).map(f => f.name + ':' + f.type).join(', '),
+            recordTypes: desc.recordTypeInfos?.filter(rt => rt.available && rt.name !== 'Master').map(rt => rt.name)
           });
         } catch (e) { /* skip invalid objects */ }
       }
       if (describes.length > 0) {
-        orgContext = 'Org metadata context:\n' + JSON.stringify(describes, null, 2);
+        orgContext = 'Org context:\n' + JSON.stringify(describes);
       }
     } catch (e) {
       orgContext = 'Org connection failed: ' + e.message;
