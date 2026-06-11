@@ -64,33 +64,21 @@ async function getSfConnection() {
   return conn;
 }
 
-// ─── Claude API Helper (18s timeout for Heroku 30s limit) ───
-function callClaude(systemPrompt, userMessage, maxTokens = 2048) {
+// ─── LLM Helper: DeepSeek → OpenRouter fallback (18s timeout) ───
+function callOpenAICompatible(hostname, path, apiKey, model, systemPrompt, userMessage, maxTokens) {
   return new Promise((resolve, reject) => {
-    const apiKey = process.env.ANTHROPIC_KEY;
-    if (!apiKey) return reject(new Error('ANTHROPIC_KEY not configured'));
-
-    const timer = setTimeout(() => {
-      req.destroy();
-      reject(new Error('Claude API timeout (18s)'));
-    }, 18000);
-
+    const timer = setTimeout(() => { req.destroy(); reject(new Error('LLM timeout (18s)')); }, 18000);
     const body = JSON.stringify({
-      model: 'claude-sonnet-4-6',
+      model,
       max_tokens: maxTokens,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userMessage }]
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage }
+      ]
     });
-
     const req = https.request({
-      hostname: 'api.anthropic.com',
-      path: '/v1/messages',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01'
-      }
+      hostname, path, method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey }
     }, res => {
       let d = '';
       res.on('data', c => d += c);
@@ -99,9 +87,8 @@ function callClaude(systemPrompt, userMessage, maxTokens = 2048) {
         try {
           const j = JSON.parse(d);
           if (j.error) return reject(new Error(j.error.message || JSON.stringify(j.error)));
-          if (j.type === 'error') return reject(new Error(j.error?.message || d.substring(0,200)));
-          const text = j.content?.map(b => b.text || '').join('') || '';
-          if (!text) return reject(new Error('Empty response from Claude'));
+          const text = j.choices?.[0]?.message?.content || '';
+          if (!text) return reject(new Error('Empty LLM response'));
           resolve(text);
         } catch (e) { reject(e); }
       });
@@ -110,6 +97,30 @@ function callClaude(systemPrompt, userMessage, maxTokens = 2048) {
     req.write(body);
     req.end();
   });
+}
+
+async function callLLM(systemPrompt, userMessage, maxTokens = 2048) {
+  // 1) Try DeepSeek direct API
+  const dsKey = process.env.DEEPSEEK_KEY;
+  if (dsKey) {
+    try {
+      console.log('[LLM] Trying DeepSeek direct...');
+      return await callOpenAICompatible('api.deepseek.com', '/chat/completions', dsKey, 'deepseek-chat', systemPrompt, userMessage, maxTokens);
+    } catch (e) {
+      console.warn('[LLM] DeepSeek failed:', e.message);
+    }
+  }
+  // 2) Fallback: OpenRouter free DeepSeek
+  const orKey = process.env.OPENROUTER_KEY;
+  if (orKey) {
+    try {
+      console.log('[LLM] Trying OpenRouter free...');
+      return await callOpenAICompatible('openrouter.ai', '/api/v1/chat/completions', orKey, 'deepseek/deepseek-chat-v3-0324:free', systemPrompt, userMessage, maxTokens);
+    } catch (e) {
+      console.warn('[LLM] OpenRouter failed:', e.message);
+    }
+  }
+  throw new Error('No LLM API available (DEEPSEEK_KEY and OPENROUTER_KEY both missing or failed)');
 }
 
 // ─── In-Memory Task Store ───────────────────
@@ -250,16 +261,16 @@ app.post('/api/chat', async (req, res) => {
       orgContext = 'Org offline: ' + e.message;
     }
 
-    // Call Claude (18s timeout)
+    // Call DeepSeek LLM
     let artifactCode;
     let usedAI = false;
     try {
       const prompt = `User request: ${message}\n\n${orgContext}`;
-      artifactCode = await callClaude(systemPrompt, prompt);
+      artifactCode = await callLLM(systemPrompt, prompt);
       usedAI = true;
     } catch (e) {
-      // Fallback to stub if Claude fails
-      console.warn('[Agent] Claude fallback:', e.message);
+      // Fallback to stub if LLM fails
+      console.warn('[Agent] LLM fallback:', e.message);
       console.warn('[Agent] Falling back to stub artifact');
       artifactCode = generateStubArtifact(detected, message);
     }
@@ -333,12 +344,12 @@ function extractObjectNames(msg) {
 
 function generateStubArtifact(agent, message) {
   const stubs = {
-    flows: `<?xml version="1.0" encoding="UTF-8"?>\n<Flow xmlns="http://soap.sforce.com/2006/04/metadata">\n  <label>Stub Flow</label>\n  <status>Draft</status>\n  <!-- ${message} -->\n  <!-- STUB: Claude API unavailable -->\n</Flow>`,
-    apex: `// STUB: Claude API unavailable\npublic class StubHandler {\n    // ${message}\n    public static void execute() {\n        // TODO\n    }\n}`,
+    flows: `<?xml version="1.0" encoding="UTF-8"?>\n<Flow xmlns="http://soap.sforce.com/2006/04/metadata">\n  <label>Stub Flow</label>\n  <status>Draft</status>\n  <!-- ${message} -->\n  <!-- STUB: DeepSeek API unavailable -->\n</Flow>`,
+    apex: `// STUB: DeepSeek API unavailable\npublic class StubHandler {\n    // ${message}\n    public static void execute() {\n        // TODO\n    }\n}`,
     validation: `{\n  "objectName": "Account",\n  "fullName": "Stub_Rule",\n  "active": false,\n  "errorConditionFormula": "false",\n  "errorMessage": "Stub — ${message}"\n}`,
     permissions: `{\n  "label": "Stub PermSet",\n  "objectPermissions": [],\n  "fieldPermissions": []\n}`,
-    data: `-- STUB: Claude API unavailable\n-- ${message}\nSELECT Id, Name FROM Account LIMIT 10`,
-    docs: `# Org Documentation (Stub)\n\n${message}\n\n> Claude API unavailable`,
+    data: `-- STUB: DeepSeek API unavailable\n-- ${message}\nSELECT Id, Name FROM Account LIMIT 10`,
+    docs: `# Org Documentation (Stub)\n\n${message}\n\n> DeepSeek API unavailable`,
     deploy: `{\n  "specName": "Stub_Deploy",\n  "metadata": {}\n}`
   };
   return stubs[agent] || stubs.flows;
