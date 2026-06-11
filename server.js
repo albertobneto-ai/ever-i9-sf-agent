@@ -502,6 +502,22 @@ app.post('/api/approve/:id', async (req, res) => {
             const r = await mcpRequest('/api/metadata-create/CustomField', fieldMeta);
             results.push({ type: 'CustomField', name: fieldMeta.fullName, success: r.success !== false, detail: r });
 
+            // Update FLS on Admin profile (fields are invisible by default)
+            if (r.success !== false) {
+              try {
+                const conn = await getSfConnection();
+                await conn.metadata.update('Profile', {
+                  fullName: 'Admin',
+                  fieldPermissions: [{
+                    field: fieldMeta.fullName,
+                    readable: true,
+                    editable: true
+                  }]
+                });
+                console.log('[FLS] Set readable+editable for', fieldMeta.fullName);
+              } catch(e) { console.warn('[FLS] Update failed:', e.message); }
+            }
+
             // Auto-add to layout
             try {
               await mcpRequest('/api/devtools/add-to-layout', {
