@@ -64,7 +64,7 @@ async function getSfConnection() {
   return conn;
 }
 
-// ─── Claude API Helper (20s timeout for Heroku 30s limit) ───
+// ─── Claude API Helper (18s timeout for Heroku 30s limit) ───
 function callClaude(systemPrompt, userMessage, maxTokens = 2048) {
   return new Promise((resolve, reject) => {
     const apiKey = process.env.ANTHROPIC_KEY;
@@ -72,8 +72,8 @@ function callClaude(systemPrompt, userMessage, maxTokens = 2048) {
 
     const timer = setTimeout(() => {
       req.destroy();
-      reject(new Error('Claude API timeout (20s)'));
-    }, 20000);
+      reject(new Error('Claude API timeout (18s)'));
+    }, 18000);
 
     const body = JSON.stringify({
       model: 'claude-sonnet-4-6',
@@ -150,11 +150,12 @@ Rules:
 - Use real objects/fields from the org context
 - Output code blocks with language markers`,
 
-  docs: `You are a Salesforce Org Documentation expert. Given org metadata context, generate comprehensive documentation.
+  docs: `You are a Salesforce Org Documentation expert. Given org metadata, generate a concise summary.
 Rules:
-- Document objects, fields, relationships, automations
+- List objects with key fields and relationships
+- Keep it under 500 words
 - Use markdown format
-- Be concise but thorough`,
+- Output ONLY the documentation, no preamble`,
 
   deploy: `You are a Salesforce Deployment expert. Given a user request, generate a deployment manifest in the Ever I9 format.
 Rules:
@@ -210,6 +211,23 @@ app.get('/api/org-status', async (req, res) => {
   }
 });
 
+// ─── Describe Cache (5 min TTL) ─────────────
+const describeCache = new Map();
+const CACHE_TTL = 5 * 60 * 1000;
+
+async function cachedDescribe(conn, objName) {
+  const cached = describeCache.get(objName);
+  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data;
+  const desc = await conn.describe(objName);
+  const slim = {
+    name: desc.name,
+    fields: desc.fields.slice(0, 20).map(f => f.name + ':' + f.type).join(', '),
+    recordTypes: desc.recordTypeInfos?.filter(rt => rt.available && rt.name !== 'Master').map(rt => rt.name)
+  };
+  describeCache.set(objName, { data: slim, ts: Date.now() });
+  return slim;
+}
+
 // Chat — receive prompt, generate real artifact
 app.post('/api/chat', async (req, res) => {
   try {
@@ -220,31 +238,19 @@ app.post('/api/chat', async (req, res) => {
     const meta = AGENT_META[detected] || AGENT_META.flows;
     const systemPrompt = AGENT_PROMPTS[detected] || AGENT_PROMPTS.flows;
 
-    // Get org context
-    let orgContext = 'Org not connected — generate generic artifact.';
+    // Get org context (parallel describes, cached)
+    let orgContext = 'Org not connected.';
     try {
       const conn = await getSfConnection();
-      // Get relevant objects based on message
-      const objects = extractObjectNames(message);
-      const describes = [];
-      for (const obj of objects.slice(0, 2)) {
-        try {
-          const desc = await conn.describe(obj);
-          describes.push({
-            name: desc.name,
-            fields: desc.fields.slice(0, 20).map(f => f.name + ':' + f.type).join(', '),
-            recordTypes: desc.recordTypeInfos?.filter(rt => rt.available && rt.name !== 'Master').map(rt => rt.name)
-          });
-        } catch (e) { /* skip invalid objects */ }
-      }
-      if (describes.length > 0) {
-        orgContext = 'Org context:\n' + JSON.stringify(describes);
-      }
+      const objects = extractObjectNames(message).slice(0, 2);
+      const results = await Promise.allSettled(objects.map(o => cachedDescribe(conn, o)));
+      const describes = results.filter(r => r.status === 'fulfilled').map(r => r.value);
+      if (describes.length > 0) orgContext = 'Org context: ' + JSON.stringify(describes);
     } catch (e) {
-      orgContext = 'Org connection failed: ' + e.message;
+      orgContext = 'Org offline: ' + e.message;
     }
 
-    // Call Claude to generate artifact
+    // Call Claude (18s timeout)
     let artifactCode;
     let usedAI = false;
     try {
