@@ -128,6 +128,46 @@ const tasks = new Map();
 
 // ─── Agent System Prompts ───────────────────
 const AGENT_PROMPTS = {
+  fields: `You are a Salesforce Metadata expert. Generate an Ever I9 deployment manifest JSON for creating fields, objects, record types, or layouts.
+
+MANIFEST FORMAT — follow EXACTLY:
+{
+  "specName": "Descriptive_Name",
+  "metadata": {
+    "customObjects": [],
+    "customFields": [],
+    "recordTypes": [],
+    "validationRules": [],
+    "permissionSets": []
+  }
+}
+
+FIELD FORMAT (inside customFields array):
+{
+  "objectName": "Lead",
+  "fieldName": "CNPJ__c",
+  "label": "CNPJ",
+  "type": "Text",
+  "length": 18
+}
+
+FIELD TYPES and required params:
+- Text: length (1-255)
+- LongTextArea: length, visibleLines
+- Number: precision, scale
+- Currency: precision, scale
+- Picklist: picklist (array of strings, e.g. ["V1","V2"])
+- MultiselectPicklist: picklist, visibleLines
+- Lookup: referenceTo, relationshipLabel
+- Checkbox, Date, DateTime, Email, Phone, Url, TextArea: no extra params
+
+CRITICAL: picklist values MUST be simple string array: "picklist": ["Value1", "Value2"]
+
+OBJECT FORMAT (inside customObjects):
+{ "fullName": "MyObj__c", "label": "My Object", "pluralLabel": "My Objects", "nameFieldType": "Text", "nameFieldLabel": "Name", "sharingModel": "ReadWrite", "deploymentStatus": "Deployed" }
+
+Output ONLY the JSON manifest, no markdown fences, no explanations.`,
+
   flows: `You are a Salesforce Flow expert agent. Given a user request and org context, generate the Flow metadata XML.
 Rules:
 - Use AutoLaunchedFlow or ScreenFlow as appropriate
@@ -176,6 +216,7 @@ Rules:
 };
 
 const AGENT_META = {
+  fields: { name: 'Metadata Agent', language: 'json', type: 'Manifest' },
   flows: { name: 'Flow Agent', language: 'xml', type: 'Flow' },
   apex: { name: 'Apex Agent', language: 'java', type: 'ApexClass' },
   validation: { name: 'Validation Agent', language: 'json', type: 'ValidationRule' },
@@ -188,6 +229,8 @@ const AGENT_META = {
 // ─── Agent Detection ────────────────────────
 function detectAgent(msg) {
   const lower = msg.toLowerCase();
+  // Fields/Metadata FIRST — most common admin task
+  if (lower.includes('campo') || lower.includes('field') || lower.includes('criar objeto') || lower.includes('create object') || lower.includes('custom object') || lower.includes('objeto custom') || lower.includes('record type') || lower.includes('tipo de registro') || lower.includes('picklist') || lower.includes('lookup') || lower.includes('layout')) return 'fields';
   if (lower.includes('flow') || lower.includes('automação') || lower.includes('automation') || lower.includes('fluxo')) return 'flows';
   if (lower.includes('apex') || lower.includes('trigger') || lower.includes('classe') || lower.includes('class')) return 'apex';
   if (lower.includes('validation') || lower.includes('validação') || lower.includes('regra de valid')) return 'validation';
@@ -195,7 +238,7 @@ function detectAgent(msg) {
   if (lower.includes('limp') || lower.includes('clean') || lower.includes('dados') || lower.includes('data clean') || lower.includes('duplicat')) return 'data';
   if (lower.includes('doc') || lower.includes('document') || lower.includes('inventar')) return 'docs';
   if (lower.includes('deploy') || lower.includes('changeset') || lower.includes('manifest')) return 'deploy';
-  return 'flows';
+  return 'fields'; // default = metadata creation (not flow)
 }
 
 // ─── Routes ─────────────────────────────────
@@ -506,6 +549,7 @@ function extractObjectNames(msg) {
 
 function generateStubArtifact(agent, message) {
   const stubs = {
+    fields: `{\n  "specName": "Stub_Field",\n  "metadata": {\n    "customFields": [{\n      "objectName": "Account",\n      "fieldName": "Stub_Field__c",\n      "label": "Stub Field",\n      "type": "Text",\n      "length": 100\n    }]\n  }\n}`,
     flows: `<?xml version="1.0" encoding="UTF-8"?>\n<Flow xmlns="http://soap.sforce.com/2006/04/metadata">\n  <label>Stub Flow</label>\n  <status>Draft</status>\n  <!-- ${message} -->\n  <!-- STUB: DeepSeek API unavailable -->\n</Flow>`,
     apex: `// STUB: DeepSeek API unavailable\npublic class StubHandler {\n    // ${message}\n    public static void execute() {\n        // TODO\n    }\n}`,
     validation: `{\n  "objectName": "Account",\n  "fullName": "Stub_Rule",\n  "active": false,\n  "errorConditionFormula": "false",\n  "errorMessage": "Stub — ${message}"\n}`,
@@ -514,7 +558,7 @@ function generateStubArtifact(agent, message) {
     docs: `# Org Documentation (Stub)\n\n${message}\n\n> DeepSeek API unavailable`,
     deploy: `{\n  "specName": "Stub_Deploy",\n  "metadata": {}\n}`
   };
-  return stubs[agent] || stubs.flows;
+  return stubs[agent] || stubs.fields;
 }
 
 // ─── Pre-connect on startup ─────────────────
