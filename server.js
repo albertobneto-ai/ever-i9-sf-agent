@@ -476,14 +476,29 @@ app.post('/api/approve/:id', async (req, res) => {
             const fieldMeta = {
               fullName: field.objectName + '.' + field.fieldName,
               label: (field.label || field.fieldName).replace(/__c$/, '').replace(/_/g, ' '),
-              type: field.type,
-              ...(field.length && { length: field.length }),
-              ...(field.precision && { precision: field.precision }),
-              ...(field.scale !== undefined && { scale: field.scale }),
-              ...(field.visibleLines && { visibleLines: field.visibleLines }),
-              ...(field.referenceTo && { referenceTo: field.referenceTo, relationshipLabel: field.relationshipLabel || field.referenceTo + 's' }),
-              ...(field.picklist && { picklist: field.picklist })
+              type: field.type
             };
+            if (field.length) fieldMeta.length = field.length;
+            if (field.precision) fieldMeta.precision = field.precision;
+            if (field.scale !== undefined) fieldMeta.scale = field.scale;
+            if (field.visibleLines) fieldMeta.visibleLines = field.visibleLines;
+            if (field.referenceTo) { fieldMeta.referenceTo = field.referenceTo; fieldMeta.relationshipLabel = field.relationshipLabel || field.referenceTo + 's'; }
+
+            // Convert picklist array to valueSet format (Metadata API v62+)
+            if (field.picklist && Array.isArray(field.picklist)) {
+              fieldMeta.valueSet = {
+                restricted: false,
+                valueSetDefinition: {
+                  value: field.picklist.map((v, i) => ({
+                    fullName: v,
+                    label: v,
+                    default: i === 0
+                  }))
+                }
+              };
+              // Remove raw picklist prop — Metadata API rejects it
+            }
+
             const r = await mcpRequest('/api/metadata-create/CustomField', fieldMeta);
             results.push({ type: 'CustomField', name: fieldMeta.fullName, success: r.success !== false, detail: r });
 
