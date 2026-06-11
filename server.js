@@ -71,7 +71,7 @@ function callClaude(systemPrompt, userMessage, maxTokens = 4096) {
     if (!apiKey) return reject(new Error('ANTHROPIC_KEY not configured'));
 
     const body = JSON.stringify({
-      model: 'claude-sonnet-4-6-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: maxTokens,
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }]
