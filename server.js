@@ -164,7 +164,7 @@ FIELD TYPES and required params:
 CRITICAL: picklist values MUST be simple string array: "picklist": ["Value1", "Value2"]
 
 OBJECT FORMAT (inside customObjects):
-{ "fullName": "MyObj__c", "label": "My Object", "pluralLabel": "My Objects", "nameFieldType": "Text", "nameFieldLabel": "Name", "sharingModel": "ReadWrite", "deploymentStatus": "Deployed" }
+{ "fullName": "MyObj__c", "label": "My Object", "pluralLabel": "My Objects", "nameField": { "type": "Text", "label": "Name" }, "sharingModel": "ReadWrite", "deploymentStatus": "Deployed" }
 
 Output ONLY the JSON manifest, no markdown fences, no explanations.`,
 
@@ -222,7 +222,7 @@ OUTPUT FORMAT — follow EXACTLY:
   "summary": "Brief description of what this spec implements",
   "metadata": {
     "customObjects": [
-      { "fullName": "MyObj__c", "label": "My Object", "pluralLabel": "My Objects", "nameFieldType": "Text", "nameFieldLabel": "Name", "sharingModel": "ReadWrite", "deploymentStatus": "Deployed" }
+      { "fullName": "MyObj__c", "label": "My Object", "pluralLabel": "My Objects", "nameField": { "type": "Text", "label": "Name" }, "sharingModel": "ReadWrite", "deploymentStatus": "Deployed" }
     ],
     "customFields": [
       { "objectName": "Lead", "fieldName": "CNPJ__c", "label": "CNPJ", "type": "Text", "length": 18 }
@@ -517,17 +517,34 @@ app.post('/api/approve/:id', async (req, res) => {
       const manifest = comp.meta;
       const results = [];
 
+      // Helper: check if metadata result is real success
+      const isOk = (r) => r.success === true && !r.error && r.status !== 'error';
+      const errMsg = (r) => r.message || r.error || (r.errors?.length ? r.errors.map(e=>e.message||e.statusCode).join('; ') : '');
+
       // Deploy custom objects
       if (manifest.metadata?.customObjects?.length) {
         for (const obj of manifest.metadata.customObjects) {
           try {
-            const r = await mcpRequest('/api/metadata-create/CustomObject', obj);
-            results.push({ type: 'CustomObject', name: obj.fullName, success: r.success !== false, detail: r });
+            // Fix format: nameFieldType → nameField sub-object
+            const meta = { ...obj };
+            if (meta.nameFieldType && !meta.nameField) {
+              meta.nameField = { type: meta.nameFieldType, label: meta.nameFieldLabel || 'Name' };
+              delete meta.nameFieldType;
+              delete meta.nameFieldLabel;
+            }
+            const r = await mcpRequest('/api/metadata-create/CustomObject', meta);
+            const ok = isOk(r);
+            results.push({ type: 'CustomObject', name: obj.fullName, success: ok, error: ok ? null : errMsg(r) });
           } catch (e) { results.push({ type: 'CustomObject', name: obj.fullName, success: false, error: e.message }); }
+        }
+        // Wait for objects to propagate before creating fields
+        if (results.some(r => r.type === 'CustomObject' && r.success)) {
+          console.log('[Deploy] Waiting 5s for object propagation...');
+          await new Promise(ok => setTimeout(ok, 5000));
         }
       }
 
-      // Deploy custom fields via metadata-create (more reliable than deploy-b64)
+      // Deploy custom fields via metadata-create
       if (manifest.metadata?.customFields?.length) {
         for (const field of manifest.metadata.customFields) {
           try {
@@ -558,7 +575,8 @@ app.post('/api/approve/:id', async (req, res) => {
             }
 
             const r = await mcpRequest('/api/metadata-create/CustomField', fieldMeta);
-            results.push({ type: 'CustomField', name: fieldMeta.fullName, success: r.success !== false, detail: r });
+            const ok = isOk(r);
+            results.push({ type: 'CustomField', name: fieldMeta.fullName, success: ok, error: ok ? null : errMsg(r) });
 
             // Update FLS on Admin profile (fields are invisible by default)
             if (r.success !== false) {
@@ -592,7 +610,7 @@ app.post('/api/approve/:id', async (req, res) => {
         for (const vr of manifest.metadata.validationRules) {
           try {
             const r = await mcpRequest('/api/metadata-create/ValidationRule', vr);
-            results.push({ type: 'ValidationRule', name: vr.fullName, success: r.success !== false, detail: r });
+            results.push({ type: 'ValidationRule', name: vr.fullName, success: isOk(r), error: isOk(r) ? null : errMsg(r) });
           } catch (e) { results.push({ type: 'ValidationRule', name: vr.fullName, success: false, error: e.message }); }
         }
       }
@@ -602,7 +620,7 @@ app.post('/api/approve/:id', async (req, res) => {
       deployResult = {
         success: failCount === 0,
         summary: { total: results.length, success: successCount, failed: failCount },
-        components: results.map(r => r.name + (r.success ? ' ✓' : ' ✗')),
+        components: results.map(r => r.name + (r.success ? ' ✓' : ' ✗' + (r.error ? ' (' + r.error + ')' : ''))),
         details: results
       };
     }
@@ -612,13 +630,26 @@ app.post('/api/approve/:id', async (req, res) => {
       const results = [];
       const manualSteps = rb.manual || [];
 
+      const isOkRb = (r) => r.success === true && !r.error && r.status !== 'error';
+      const errMsgRb = (r) => r.message || r.error || (r.errors?.length ? r.errors.map(e=>e.message||e.statusCode).join('; ') : 'unknown error');
+
       // 1. Deploy custom objects
       if (rb.metadata?.customObjects?.length) {
         for (const obj of rb.metadata.customObjects) {
           try {
-            const r = await mcpRequest('/api/metadata-create/CustomObject', obj);
-            results.push({ type: 'CustomObject', name: obj.fullName, success: r.success !== false });
+            const meta = { ...obj };
+            if (meta.nameFieldType && !meta.nameField) {
+              meta.nameField = { type: meta.nameFieldType, label: meta.nameFieldLabel || 'Name' };
+              delete meta.nameFieldType; delete meta.nameFieldLabel;
+            }
+            const r = await mcpRequest('/api/metadata-create/CustomObject', meta);
+            const ok = isOkRb(r);
+            results.push({ type: 'CustomObject', name: obj.fullName, success: ok, error: ok ? null : errMsgRb(r) });
           } catch (e) { results.push({ type: 'CustomObject', name: obj.fullName, success: false, error: e.message }); }
+        }
+        if (results.some(r => r.type === 'CustomObject' && r.success)) {
+          console.log('[Deploy] Waiting 5s for object propagation...');
+          await new Promise(ok => setTimeout(ok, 5000));
         }
       }
 
@@ -640,8 +671,8 @@ app.post('/api/approve/:id', async (req, res) => {
               fieldMeta.valueSet = { restricted: false, valueSetDefinition: { value: field.picklist.map((v, i) => ({ fullName: v, label: v, default: i === 0 })) } };
             }
             const r = await mcpRequest('/api/metadata-create/CustomField', fieldMeta);
-            const ok = r.success !== false;
-            results.push({ type: 'CustomField', name: fieldMeta.fullName, success: ok });
+            const ok = isOkRb(r);
+            results.push({ type: 'CustomField', name: fieldMeta.fullName, success: ok, error: ok ? null : errMsgRb(r) });
             if (ok) {
               try { const conn = await getSfConnection(); await conn.metadata.update('Profile', { fullName: 'Admin', fieldPermissions: [{ field: fieldMeta.fullName, readable: true, editable: true }] }); } catch(e) {}
               try { await mcpRequest('/api/devtools/add-to-layout', { objectName: field.objectName, fieldName: field.fieldName }); } catch(e) {}
@@ -655,7 +686,8 @@ app.post('/api/approve/:id', async (req, res) => {
         for (const vr of rb.metadata.validationRules) {
           try {
             const r = await mcpRequest('/api/metadata-create/ValidationRule', vr);
-            results.push({ type: 'ValidationRule', name: vr.fullName, success: r.success !== false });
+            const ok = isOkRb(r);
+            results.push({ type: 'ValidationRule', name: vr.fullName, success: ok, error: ok ? null : errMsgRb(r) });
           } catch (e) { results.push({ type: 'ValidationRule', name: vr.fullName, success: false, error: e.message }); }
         }
       }
@@ -665,7 +697,8 @@ app.post('/api/approve/:id', async (req, res) => {
         for (const cls of rb.apexClasses) {
           try {
             const r = await mcpRequest('/api/deploy-code', { apexClasses: [{ name: cls.name, body: cls.body }] });
-            results.push({ type: 'ApexClass', name: cls.name, success: !r.error });
+            const ok = !r.error && r.status !== 'error';
+            results.push({ type: 'ApexClass', name: cls.name, success: ok, error: ok ? null : (r.error || r.message) });
           } catch (e) { results.push({ type: 'ApexClass', name: cls.name, success: false, error: e.message }); }
         }
       }
@@ -675,7 +708,8 @@ app.post('/api/approve/:id', async (req, res) => {
         for (const trg of rb.apexTriggers) {
           try {
             const r = await mcpRequest('/api/deploy-code', { apexTriggers: [{ name: trg.name, body: trg.body }] });
-            results.push({ type: 'ApexTrigger', name: trg.name, success: !r.error });
+            const ok = !r.error && r.status !== 'error';
+            results.push({ type: 'ApexTrigger', name: trg.name, success: ok, error: ok ? null : (r.error || r.message) });
           } catch (e) { results.push({ type: 'ApexTrigger', name: trg.name, success: false, error: e.message }); }
         }
       }
@@ -685,7 +719,7 @@ app.post('/api/approve/:id', async (req, res) => {
       deployResult = {
         success: failCount === 0,
         summary: { total: results.length, success: successCount, failed: failCount, manual: manualSteps.length },
-        components: results.map(r => r.type + ' ' + r.name + (r.success ? ' ✓' : ' ✗')),
+        components: results.map(r => r.type + ' ' + r.name + (r.success ? ' ✓' : ' ✗' + (r.error ? ' (' + r.error + ')' : ''))),
         manual: manualSteps,
         details: results
       };
