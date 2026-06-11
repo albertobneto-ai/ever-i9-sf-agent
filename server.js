@@ -212,10 +212,58 @@ Rules:
 Rules:
 - Output a JSON manifest with: { "specName": "...", "metadata": { "customObjects": [], "customFields": [], ... } }
 - Follow the Ever I9 manifest format exactly
-- Output ONLY the JSON, no explanations`
+- Output ONLY the JSON, no explanations`,
+
+  runbook: `You are a Salesforce technical specification parser. Extract ALL deployable components from the spec/runbook provided and output a structured JSON.
+
+OUTPUT FORMAT — follow EXACTLY:
+{
+  "specName": "Name_From_Spec",
+  "summary": "Brief description of what this spec implements",
+  "metadata": {
+    "customObjects": [
+      { "fullName": "MyObj__c", "label": "My Object", "pluralLabel": "My Objects", "nameFieldType": "Text", "nameFieldLabel": "Name", "sharingModel": "ReadWrite", "deploymentStatus": "Deployed" }
+    ],
+    "customFields": [
+      { "objectName": "Lead", "fieldName": "CNPJ__c", "label": "CNPJ", "type": "Text", "length": 18 }
+    ],
+    "validationRules": [
+      { "objectName": "Lead", "fullName": "Lead.Rule_Name", "active": true, "errorConditionFormula": "...", "errorMessage": "..." }
+    ],
+    "recordTypes": [
+      { "objectName": "Account", "fullName": "Account.Enterprise", "label": "Enterprise", "active": true }
+    ],
+    "permissionSets": []
+  },
+  "apexClasses": [
+    { "name": "ClassName", "body": "full apex code here" }
+  ],
+  "apexTriggers": [
+    { "name": "TriggerName", "body": "full trigger code here" }
+  ],
+  "manual": [
+    { "type": "Flow", "name": "Flow Name", "description": "What it does", "steps": "Step-by-step guide to create in Setup" },
+    { "type": "PageLayout", "name": "Layout Name", "description": "Sections and field arrangement" },
+    { "type": "LightningPage", "name": "Page Name", "description": "Components and layout" },
+    { "type": "ReportType", "name": "Report Name", "description": "Objects and fields to include" }
+  ]
+}
+
+FIELD TYPES: Text(length), LongTextArea(length,visibleLines), Number(precision,scale), Currency(precision,scale), Picklist(picklist:["V1","V2"]), Lookup(referenceTo,relationshipLabel), Checkbox, Date, DateTime, Email, Phone, Url, TextArea.
+
+RULES:
+- Extract EVERY component mentioned in the spec — objects, fields, validation rules, apex, flows, layouts, reports, permission sets
+- Put auto-deployable components in metadata/apexClasses/apexTriggers
+- Put NON-automatable items in "manual" with clear step-by-step instructions
+- For Apex, include the COMPLETE code — not stubs
+- For picklist fields, use simple array: "picklist": ["V1", "V2"]
+- Field names MUST end with __c
+- If the spec mentions Record Types, include them
+- Output ONLY the JSON, no markdown fences, no explanations`
 };
 
 const AGENT_META = {
+  runbook: { name: 'Runbook Agent', language: 'json', type: 'Runbook' },
   fields: { name: 'Metadata Agent', language: 'json', type: 'Manifest' },
   flows: { name: 'Flow Agent', language: 'xml', type: 'Flow' },
   apex: { name: 'Apex Agent', language: 'java', type: 'ApexClass' },
@@ -229,6 +277,9 @@ const AGENT_META = {
 // ─── Agent Detection ────────────────────────
 function detectAgent(msg) {
   const lower = msg.toLowerCase();
+  const len = msg.length;
+  // Runbook — large text (spec pasted) or explicit trigger
+  if (lower.includes('runbook') || lower.includes('/runbook') || lower.includes('especificação técnica') || lower.includes('spec técnica') || lower.includes('executar spec') || len > 1500) return 'runbook';
   // Fields/Metadata FIRST — most common admin task
   if (lower.includes('campo') || lower.includes('field') || lower.includes('criar objeto') || lower.includes('create object') || lower.includes('custom object') || lower.includes('objeto custom') || lower.includes('record type') || lower.includes('tipo de registro') || lower.includes('picklist') || lower.includes('lookup') || lower.includes('layout')) return 'fields';
   if (lower.includes('flow') || lower.includes('automação') || lower.includes('automation') || lower.includes('fluxo')) return 'flows';
@@ -309,7 +360,8 @@ app.post('/api/chat', async (req, res) => {
     let usedAI = false;
     try {
       const prompt = `User request: ${message}\n\n${orgContext}`;
-      artifactCode = await callLLM(systemPrompt, prompt);
+      const maxTokens = (detected === 'runbook') ? 4096 : 2048;
+      artifactCode = await callLLM(systemPrompt, prompt, maxTokens);
       usedAI = true;
     } catch (e) {
       // Fallback to stub if LLM fails
@@ -410,6 +462,12 @@ function extractComponentName(task) {
       const j = JSON.parse(code);
       return { name: j.specName || 'Manifest', kind: 'Manifest', meta: j };
     } catch(e) { return { name: 'Manifest', kind: 'Manifest' }; }
+  }
+  if (type === 'Runbook') {
+    try {
+      const j = JSON.parse(code);
+      return { name: j.specName || 'Runbook', kind: 'Runbook', meta: j };
+    } catch(e) { return { name: 'Runbook', kind: 'Runbook' }; }
   }
   return { name: task.agentName, kind: type };
 }
@@ -548,6 +606,90 @@ app.post('/api/approve/:id', async (req, res) => {
         details: results
       };
     }
+    else if (comp.kind === 'Runbook' && comp.meta) {
+      console.log('[Deploy] Runbook:', comp.name);
+      const rb = comp.meta;
+      const results = [];
+      const manualSteps = rb.manual || [];
+
+      // 1. Deploy custom objects
+      if (rb.metadata?.customObjects?.length) {
+        for (const obj of rb.metadata.customObjects) {
+          try {
+            const r = await mcpRequest('/api/metadata-create/CustomObject', obj);
+            results.push({ type: 'CustomObject', name: obj.fullName, success: r.success !== false });
+          } catch (e) { results.push({ type: 'CustomObject', name: obj.fullName, success: false, error: e.message }); }
+        }
+      }
+
+      // 2. Deploy custom fields (with FLS + layout)
+      if (rb.metadata?.customFields?.length) {
+        for (const field of rb.metadata.customFields) {
+          try {
+            const fieldMeta = {
+              fullName: field.objectName + '.' + field.fieldName,
+              label: (field.label || field.fieldName).replace(/__c$/, '').replace(/_/g, ' '),
+              type: field.type
+            };
+            if (field.length) fieldMeta.length = field.length;
+            if (field.precision) fieldMeta.precision = field.precision;
+            if (field.scale !== undefined) fieldMeta.scale = field.scale;
+            if (field.visibleLines) fieldMeta.visibleLines = field.visibleLines;
+            if (field.referenceTo) { fieldMeta.referenceTo = field.referenceTo; fieldMeta.relationshipLabel = field.relationshipLabel || field.referenceTo + 's'; }
+            if (field.picklist && Array.isArray(field.picklist)) {
+              fieldMeta.valueSet = { restricted: false, valueSetDefinition: { value: field.picklist.map((v, i) => ({ fullName: v, label: v, default: i === 0 })) } };
+            }
+            const r = await mcpRequest('/api/metadata-create/CustomField', fieldMeta);
+            const ok = r.success !== false;
+            results.push({ type: 'CustomField', name: fieldMeta.fullName, success: ok });
+            if (ok) {
+              try { const conn = await getSfConnection(); await conn.metadata.update('Profile', { fullName: 'Admin', fieldPermissions: [{ field: fieldMeta.fullName, readable: true, editable: true }] }); } catch(e) {}
+              try { await mcpRequest('/api/devtools/add-to-layout', { objectName: field.objectName, fieldName: field.fieldName }); } catch(e) {}
+            }
+          } catch (e) { results.push({ type: 'CustomField', name: field.fieldName, success: false, error: e.message }); }
+        }
+      }
+
+      // 3. Deploy validation rules
+      if (rb.metadata?.validationRules?.length) {
+        for (const vr of rb.metadata.validationRules) {
+          try {
+            const r = await mcpRequest('/api/metadata-create/ValidationRule', vr);
+            results.push({ type: 'ValidationRule', name: vr.fullName, success: r.success !== false });
+          } catch (e) { results.push({ type: 'ValidationRule', name: vr.fullName, success: false, error: e.message }); }
+        }
+      }
+
+      // 4. Deploy Apex classes
+      if (rb.apexClasses?.length) {
+        for (const cls of rb.apexClasses) {
+          try {
+            const r = await mcpRequest('/api/deploy-code', { apexClasses: [{ name: cls.name, body: cls.body }] });
+            results.push({ type: 'ApexClass', name: cls.name, success: !r.error });
+          } catch (e) { results.push({ type: 'ApexClass', name: cls.name, success: false, error: e.message }); }
+        }
+      }
+
+      // 5. Deploy Apex triggers
+      if (rb.apexTriggers?.length) {
+        for (const trg of rb.apexTriggers) {
+          try {
+            const r = await mcpRequest('/api/deploy-code', { apexTriggers: [{ name: trg.name, body: trg.body }] });
+            results.push({ type: 'ApexTrigger', name: trg.name, success: !r.error });
+          } catch (e) { results.push({ type: 'ApexTrigger', name: trg.name, success: false, error: e.message }); }
+        }
+      }
+
+      const successCount = results.filter(r => r.success).length;
+      const failCount = results.filter(r => !r.success).length;
+      deployResult = {
+        success: failCount === 0,
+        summary: { total: results.length, success: successCount, failed: failCount, manual: manualSteps.length },
+        components: results.map(r => r.type + ' ' + r.name + (r.success ? ' ✓' : ' ✗')),
+        manual: manualSteps,
+        details: results
+      };
+    }
     else {
       // Generic — return as preview only (no auto-deploy for flows/docs/permsets yet)
       task.status = 'pending_manual';
@@ -635,6 +777,7 @@ function extractObjectNames(msg) {
 
 function generateStubArtifact(agent, message) {
   const stubs = {
+    runbook: `{\n  "specName": "Stub_Runbook",\n  "summary": "Stub — DeepSeek unavailable",\n  "metadata": { "customFields": [] },\n  "apexClasses": [],\n  "manual": [{ "type": "Info", "name": "Retry", "description": "LLM indisponível. Cole a spec novamente." }]\n}`,
     fields: `{\n  "specName": "Stub_Field",\n  "metadata": {\n    "customFields": [{\n      "objectName": "Account",\n      "fieldName": "Stub_Field__c",\n      "label": "Stub Field",\n      "type": "Text",\n      "length": 100\n    }]\n  }\n}`,
     flows: `<?xml version="1.0" encoding="UTF-8"?>\n<Flow xmlns="http://soap.sforce.com/2006/04/metadata">\n  <label>Stub Flow</label>\n  <status>Draft</status>\n  <!-- ${message} -->\n  <!-- STUB: DeepSeek API unavailable -->\n</Flow>`,
     apex: `// STUB: DeepSeek API unavailable\npublic class StubHandler {\n    // ${message}\n    public static void execute() {\n        // TODO\n    }\n}`,
