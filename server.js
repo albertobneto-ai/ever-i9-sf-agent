@@ -167,7 +167,13 @@ OBJECT FORMAT (inside customObjects):
 Text name: { "fullName": "MyObj__c", "label": "My Object", "pluralLabel": "My Objects", "nameField": { "type": "Text", "label": "Name" }, "sharingModel": "ReadWrite", "deploymentStatus": "Deployed" }
 AutoNumber: { "fullName": "MyObj__c", "label": "My Object", "pluralLabel": "My Objects", "nameField": { "type": "AutoNumber", "label": "Number", "displayFormat": "PRE-{0000}" }, "sharingModel": "ReadWrite", "deploymentStatus": "Deployed" }
 
-CRITICAL: ALL objects, fields, lookups MUST go in metadata arrays — NEVER in manual. picklist values MUST be simple array.
+CRITICAL RULES:
+- ALL objects, fields, lookups MUST go in metadata arrays — NEVER in manual
+- picklist values MUST be simple array: ["V1","V2"]
+- NEVER create standard objects as customObjects. These ALREADY EXIST: Account, Contact, Lead, Opportunity, Case, Order, Quote, Contract, Campaign, Product2, Pricebook2, PricebookEntry, OpportunityLineItem, Task, Event, User, ContentDocument, ContentVersion, Attachment, Note. For standard objects, ONLY add custom fields (ending in __c) in customFields.
+- NEVER create standard fields as customFields. These ALREADY EXIST and cannot be created: Name, FirstName, LastName, Company, Title, Email, Phone, Fax, MobilePhone, Website, Industry, Type, Rating, Description, OwnerId, CreatedById, LastModifiedById, BillingStreet, BillingCity, BillingState, BillingPostalCode, BillingCountry, ShippingStreet, ShippingCity, ShippingState, ShippingPostalCode, ShippingCountry, Street, City, State, PostalCode, Country, AnnualRevenue, NumberOfEmployees, LeadSource, Status, StageName, Amount, CloseDate, Probability, AccountId, ContactId, ParentId.
+- Custom field names MUST end with __c (e.g. CNPJ__c, Segmento__c)
+- Custom object names MUST end with __c (e.g. Visita__c, Proposta__c)
 Output ONLY the JSON manifest, no markdown fences, no explanations.`,
 
   flows: `You are a Salesforce Flow expert agent. Given a user request and org context, generate the Flow metadata XML.
@@ -253,6 +259,9 @@ CRITICAL RULES:
 - picklist values MUST be simple array: "picklist": ["V1", "V2"]
 - Field names MUST end with __c
 - For Apex, include COMPLETE code
+- NEVER create standard objects as customObjects. These ALREADY EXIST: Account, Contact, Lead, Opportunity, Case, Order, Quote, Contract, Campaign, Product2, Pricebook2, PricebookEntry, OpportunityLineItem, Task, Event, User, ContentDocument, ContentVersion, Attachment, Note. For standard objects, ONLY add custom fields in customFields.
+- NEVER create standard fields as customFields. These ALREADY EXIST: Name, FirstName, LastName, Company, Title, Email, Phone, Fax, MobilePhone, Website, Industry, Type, Rating, Description, OwnerId, CreatedById, LastModifiedById, BillingStreet, BillingCity, BillingState, BillingPostalCode, BillingCountry, ShippingStreet, ShippingCity, ShippingState, ShippingPostalCode, ShippingCountry, Street, City, State, PostalCode, Country, AnnualRevenue, NumberOfEmployees, LeadSource, Status, StageName, Amount, CloseDate, Probability, AccountId, ContactId, ParentId.
+- Custom field names MUST end with __c. Custom object names MUST end with __c.
 - Output ONLY JSON, no markdown fences, no explanations`
 };
 
@@ -268,6 +277,10 @@ const AGENT_META = {
   deploy: { name: 'Deploy Agent', language: 'json', type: 'Manifest' }
 };
 
+
+// ── Standard Objects & Fields (NEVER deploy as custom) ──
+const STD_OBJECTS = new Set(['Account','Contact','Lead','Opportunity','Case','Order','Quote','Contract','Campaign','Product2','Pricebook2','PricebookEntry','OpportunityLineItem','Task','Event','User','ContentDocument','ContentVersion','Attachment','Note','EmailMessage','FeedItem','Dashboard','Report','Solution','Asset','Entitlement','ServiceContract','WorkOrder','WorkOrderLineItem']);
+const STD_FIELDS = new Set(['Name','FirstName','LastName','Company','Title','Email','Phone','Fax','MobilePhone','Website','Industry','Type','Rating','Description','OwnerId','CreatedById','LastModifiedById','BillingStreet','BillingCity','BillingState','BillingPostalCode','BillingCountry','ShippingStreet','ShippingCity','ShippingState','ShippingPostalCode','ShippingCountry','Street','City','State','PostalCode','Country','AnnualRevenue','NumberOfEmployees','LeadSource','Status','StageName','Amount','CloseDate','Probability','AccountId','ContactId','ParentId','Subject','Priority','IsDeleted','SystemModstamp','CreatedDate','LastModifiedDate','RecordTypeId']);
 // ─── Agent Detection ────────────────────────
 function detectAgent(msg) {
   const lower = msg.toLowerCase();
@@ -516,6 +529,38 @@ app.post('/api/approve/:id', async (req, res) => {
       const errMsg = (r) => r.message || r.error || (r.errors?.length ? r.errors.map(e=>e.message||e.statusCode).join('; ') : '');
 
       // Deploy custom objects
+      // ── Filter out standard objects and fields before deploy ──
+
+      if (manifest.metadata?.customObjects) {
+        const before = manifest.metadata.customObjects.length;
+        manifest.metadata.customObjects = manifest.metadata.customObjects.filter(o => {
+          const fn = o.fullName || '';
+          if (STD_OBJECTS.has(fn) || !fn.includes('__')) {
+            console.log('[sf-agent] Filtered out standard object:', fn);
+            return false;
+          }
+          return true;
+        });
+        if (before !== manifest.metadata.customObjects.length) {
+          console.log(`[sf-agent] Removed ${before - manifest.metadata.customObjects.length} standard objects`);
+        }
+      }
+
+      if (manifest.metadata?.customFields) {
+        const before = manifest.metadata.customFields.length;
+        manifest.metadata.customFields = manifest.metadata.customFields.filter(f => {
+          const fn = f.fieldName || '';
+          if (!fn.endsWith('__c') && !fn.endsWith('__pc') && !fn.endsWith('__r')) {
+            console.log('[sf-agent] Filtered out standard field:', f.objectName + '.' + fn);
+            return false;
+          }
+          return true;
+        });
+        if (before !== manifest.metadata.customFields.length) {
+          console.log(`[sf-agent] Removed ${before - manifest.metadata.customFields.length} standard fields`);
+        }
+      }
+
       if (manifest.metadata?.customObjects?.length) {
         for (const obj of manifest.metadata.customObjects) {
           try {
@@ -628,6 +673,14 @@ app.post('/api/approve/:id', async (req, res) => {
       const errMsgRb = (r) => r.message || r.error || (r.errors?.length ? r.errors.map(e=>e.message||e.statusCode).join('; ') : 'unknown error');
 
       // 1. Deploy custom objects
+      // ── Filter standard objects/fields from runbook ──
+      if (rb.metadata?.customObjects) {
+        rb.metadata.customObjects = rb.metadata.customObjects.filter(o => !STD_OBJECTS.has(o.fullName) && (o.fullName||'').includes('__'));
+      }
+      if (rb.metadata?.customFields) {
+        rb.metadata.customFields = rb.metadata.customFields.filter(f => (f.fieldName||'').endsWith('__c') || (f.fieldName||'').endsWith('__pc'));
+      }
+
       if (rb.metadata?.customObjects?.length) {
         for (const obj of rb.metadata.customObjects) {
           try {
