@@ -64,17 +64,49 @@ async function getSfConnection() {
   return conn;
 }
 
-// ─── LLM Helper: DeepSeek → OpenRouter fallback (18s timeout) ───
-function callOpenAICompatible(hostname, path, apiKey, model, systemPrompt, userMessage, maxTokens) {
+// ─── LLM Helper: Anthropic Claude (Sonnet → Haiku) ───
+function callAnthropic(apiKey, model, systemPrompt, userMessage, maxTokens) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { req.destroy(); reject(new Error('LLM timeout (18s)')); }, 18000);
+    const timer = setTimeout(() => { req.destroy(); reject(new Error('LLM timeout (45s)')); }, 45000);
     const body = JSON.stringify({
       model,
       max_tokens: maxTokens,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userMessage }
-      ]
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userMessage }]
+    });
+    const req = https.request({
+      hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01'
+      }
+    }, res => {
+      let d = '';
+      res.on('data', c => d += c);
+      res.on('end', () => {
+        clearTimeout(timer);
+        try {
+          const j = JSON.parse(d);
+          if (j.error) return reject(new Error(j.error.message || JSON.stringify(j.error)));
+          const text = j.content?.[0]?.text || '';
+          if (!text) return reject(new Error('Empty LLM response'));
+          resolve(text);
+        } catch (e) { reject(e); }
+      });
+    });
+    req.on('error', e => { clearTimeout(timer); reject(e); });
+    req.write(body);
+    req.end();
+  });
+}
+
+function callOpenAICompatible(hostname, path, apiKey, model, systemPrompt, userMessage, maxTokens) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { req.destroy(); reject(new Error('LLM timeout (30s)')); }, 30000);
+    const body = JSON.stringify({
+      model, max_tokens: maxTokens,
+      messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userMessage }]
     });
     const req = https.request({
       hostname, path, method: 'POST',
@@ -99,28 +131,35 @@ function callOpenAICompatible(hostname, path, apiKey, model, systemPrompt, userM
   });
 }
 
-async function callLLM(systemPrompt, userMessage, maxTokens = 2048) {
-  // 1) Try DeepSeek direct API
-  const dsKey = process.env.DEEPSEEK_KEY;
-  if (dsKey) {
+async function callLLM(systemPrompt, userMessage, maxTokens = 4096) {
+  const anthropicKey = process.env.ANTHROPIC_KEY;
+  // 1) Claude Sonnet (primary)
+  if (anthropicKey) {
     try {
-      console.log('[LLM] Trying DeepSeek direct...');
-      return await callOpenAICompatible('api.deepseek.com', '/chat/completions', dsKey, 'deepseek-chat', systemPrompt, userMessage, maxTokens);
+      console.log('[LLM] Trying Claude Sonnet 4.6...');
+      return await callAnthropic(anthropicKey, 'claude-sonnet-4-6', systemPrompt, userMessage, maxTokens);
     } catch (e) {
-      console.warn('[LLM] DeepSeek failed:', e.message);
+      console.warn('[LLM] Sonnet failed:', e.message);
+    }
+    // 2) Claude Haiku (fallback)
+    try {
+      console.log('[LLM] Trying Claude Haiku...');
+      return await callAnthropic(anthropicKey, 'claude-haiku-4-5-20251001', systemPrompt, userMessage, maxTokens);
+    } catch (e) {
+      console.warn('[LLM] Haiku failed:', e.message);
     }
   }
-  // 2) Fallback: OpenRouter free DeepSeek
-  const orKey = process.env.OPENROUTER_KEY;
-  if (orKey) {
+  // 3) xAI Grok (last resort)
+  const xaiKey = process.env.XAI_KEY || process.env.GROK_KEY;
+  if (xaiKey) {
     try {
-      console.log('[LLM] Trying OpenRouter free...');
-      return await callOpenAICompatible('openrouter.ai', '/api/v1/chat/completions', orKey, 'deepseek/deepseek-chat-v3-0324:free', systemPrompt, userMessage, maxTokens);
+      console.log('[LLM] Trying Grok 4.3...');
+      return await callOpenAICompatible('api.x.ai', '/v1/chat/completions', xaiKey, 'grok-4.3', systemPrompt, userMessage, maxTokens);
     } catch (e) {
-      console.warn('[LLM] OpenRouter failed:', e.message);
+      console.warn('[LLM] Grok failed:', e.message);
     }
   }
-  throw new Error('No LLM API available (DEEPSEEK_KEY and OPENROUTER_KEY both missing or failed)');
+  throw new Error('No LLM API available (ANTHROPIC_KEY missing or all models failed)');
 }
 
 // ─── In-Memory Task Store ───────────────────
@@ -507,11 +546,11 @@ app.post('/api/approve/:id', async (req, res) => {
     else if (comp.kind === 'ValidationRule' && comp.meta) {
       console.log('[Deploy] ValidationRule:', comp.name);
       const vr = comp.meta;
-      // Deploy via manifest
+      // Deploy via manifest — strip objectName (Metadata API rejects it)
+      const fn = vr.fullName?.includes('.') ? vr.fullName : (vr.objectName + '.' + (vr.fullName || 'Rule'));
       deployResult = await mcpRequest('/api/deploy-code', {
         validationRules: [{
-          objectName: vr.objectName,
-          fullName: vr.fullName?.includes('.') ? vr.fullName : (vr.objectName + '.' + vr.fullName),
+          fullName: fn,
           active: vr.active !== false,
           errorConditionFormula: vr.errorConditionFormula,
           errorMessage: vr.errorMessage,
@@ -648,7 +687,13 @@ app.post('/api/approve/:id', async (req, res) => {
       if (manifest.metadata?.validationRules?.length) {
         for (const vr of manifest.metadata.validationRules) {
           try {
-            const r = await mcpRequest('/api/metadata-create/ValidationRule', vr);
+            // Strip objectName — Metadata API doesn't accept it as XML element
+            const vrClean = { ...vr };
+            if (vrClean.objectName) {
+              if (!vrClean.fullName?.includes('.')) vrClean.fullName = vrClean.objectName + '.' + (vrClean.fullName || 'Rule');
+              delete vrClean.objectName;
+            }
+            const r = await mcpRequest('/api/metadata-create/ValidationRule', vrClean);
             results.push({ type: 'ValidationRule', name: vr.fullName, success: isOk(r), error: isOk(r) ? null : errMsg(r) });
           } catch (e) { results.push({ type: 'ValidationRule', name: vr.fullName, success: false, error: e.message }); }
         }
@@ -732,7 +777,12 @@ app.post('/api/approve/:id', async (req, res) => {
       if (rb.metadata?.validationRules?.length) {
         for (const vr of rb.metadata.validationRules) {
           try {
-            const r = await mcpRequest('/api/metadata-create/ValidationRule', vr);
+            const vrClean = { ...vr };
+            if (vrClean.objectName) {
+              if (!vrClean.fullName?.includes('.')) vrClean.fullName = vrClean.objectName + '.' + (vrClean.fullName || 'Rule');
+              delete vrClean.objectName;
+            }
+            const r = await mcpRequest('/api/metadata-create/ValidationRule', vrClean);
             const ok = isOkRb(r);
             results.push({ type: 'ValidationRule', name: vr.fullName, success: ok, error: ok ? null : errMsgRb(r) });
           } catch (e) { results.push({ type: 'ValidationRule', name: vr.fullName, success: false, error: e.message }); }
